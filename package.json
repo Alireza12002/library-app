@@ -1,0 +1,34 @@
+{
+  "name": "library-app",
+  "version": "0.1.0",
+  "main": "expo-router/entry",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "no-java expo start --android",
+    "ios": "no-java expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --check .",
+    "format:write": "prettier --write ."
+  },
+  "dependencies": {
+    "@kishannareshpal/expo-pdf": "0.3.2",
+    "expo": "~57.0.16",
+    "expo-document-picker": "~57.0.1",
+    "expo-file-system": "~57.0.5",
+    "expo-router": "~57.0.4",
+    "expo-sqlite": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "eslint": "^10.9.1",
+    "eslint-config-expo": "~57.0.1",
+    "prettier": "^3.7.4",
+    "typescript": "~6.0.3"
+  }
+}
