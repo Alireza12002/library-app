@@ -106,8 +106,9 @@ library-app/
 │   │   ├── book-detail/
 │   │   ├── reader/                   # components/ (PdfScreen, ReflowScreen), hooks/
 │   │   └── settings/                 # typography & theme controls (later phase)
-│   ├── components/layout/            # shared primitives (Screen, EmptyState, Section, Row)
-│   ├── theme/                        # tokens, dark/light, typography scale
+│   ├── components/ui/                # design system primitives (Screen, Text, Button,
+│   │                                 # IconButton, Card, EmptyState, Divider, …)
+│   ├── theme/                        # tokens, light/dark palettes, common styles
 │   └── config/                       # constants: limits, debounce ms, storage dirs
 ├── assets/
 ├── docs/                             # this file
@@ -133,10 +134,22 @@ Import-alias: `@/*` → `src/*` (and routes use relative or `@/`).
 | `pdf/` | PdfEngine port impl, engine selection | core/ports, `@kishannareshpal/expo-pdf` | data, services, features |
 | `services/` | business rules, orchestration | core, repositories, files, pdf/engine | RN components, `app/` routes |
 | `features/*` | UI components + hooks | services (public fns), core/entities, theme | direct sqlite/fs/pdf-lib usage |
-| `components/layout` | shared presentation primitives | `theme`, react-native | services, core entities, data, files, pdf |
-| `app/` | routing, screen composition | features, `components/layout`, services (via hooks) | repositories, db, fs, pdf adapter |
+| `components/ui` | design system primitives | `theme`, react-native, `@expo/vector-icons` | services, core entities, data, files, pdf |
+| `app/` | routing, screen composition | features, `components/ui`, services (via hooks) | repositories, db, fs, pdf adapter |
 
 Cross-module communication happens **through `core/ports` interfaces**, so any adapter (PDF lib, storage, picker) can be swapped without touching services or UI.
+
+### Design system (`src/theme` + `src/components/ui`)
+
+`theme/` owns every visual constant: `tokens.ts` (spacing, radius, typography, the light/dark palettes), `ThemeProvider.tsx` (resolves the active palette from the OS scheme, exposed via `useTheme()`), `commonStyles.ts` (recurring shapes — card, field, divider, accent wash), and `readerThemes.ts` (the separate light/sepia/dark *reading surface* axis, selected per `ReadingSettings.theme`).
+
+`components/ui/` holds the primitives every screen composes from: `Screen`, `Text`, `Button`, `Icon`, `IconButton`, `Card`, `EmptyState`, `Divider`, `Section`, `Row`, `TabBarIcon`. Rules:
+
+- Screens style themselves **only** through these primitives and `useTheme()`; a raw `fontSize`, hex colour, or magic padding in a route is a review failure.
+- Primitives are presentation-only — no services, repositories, filesystem or PDF imports.
+- Keep the set small. Add a primitive when a shape has actually repeated, not speculatively; this is a token layer, not a UI framework.
+
+Light palette values are **pixel-measured** from the reference design. The dark palette, the `Button` styling and the `EmptyState` composition are **derived** (no reference exists for them) and are marked as pending design review in code.
 
 ---
 
@@ -213,6 +226,7 @@ Rules: timestamps as unix-ms integers; all writes through repositories; migratio
 | `@kishannareshpal/expo-pdf@0.3.2` | PDF rendering (verified above) | only native PDF option that is Expo-Module based, actively published, zero JS deps |
 | `react-native-safe-area-context` | safe-area insets | **required peer of `expo-router`** — `expo-router` imports `SafeAreaProvider` at module load and the vendored bottom-tabs/native-stack views require it; the app cannot boot without it. Installed via `npx expo install` (SDK-pinned) |
 | `expo-linking` | deep-link URL handling | **required peer of `expo-router`**; backs the `library://` scheme declared in `app.json`. Installed via `npx expo install` (SDK-pinned) |
+| `@expo/vector-icons` | UI icons | design system needs an outline icon set (tab bar, icon buttons, empty states); ships as part of the Expo SDK — no third-party version risk, no extra native config. Ionicons outline set matches the reference design |
 | `zustand` | **deferred until a real need appears** | expected candidate: reader UI state shared across PdfScreen/ReflowScreen chrome. Do not add until a hook-local state demonstrably fails |
 
 ### Dev

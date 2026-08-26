@@ -1,30 +1,49 @@
 import { Tabs } from 'expo-router';
 
-import { theme } from '@/theme';
+import { TabBarIcon } from '@/components/ui';
+import { useTheme } from '@/theme';
 
 /**
- * Tab group: the two top-level destinations of the app.
- * Labels only for now — an icon set is a new dependency and needs a written
- * justification in ARCHITECTURE.md §5 first.
+ * Tab group: the two top-level destinations. Labels and icons follow the
+ * reference UI ("Home" + house, "Settings" + gear, outline set), with the
+ * active item tinted terracotta.
  */
 export default function TabsLayout() {
+  const { colors, typography, hairline } = useTheme();
+
   return (
     <Tabs
       screenOptions={{
-        headerShown: true,
-        headerStyle: { backgroundColor: theme.colors.card },
-        headerTitleStyle: { color: theme.colors.text },
-        sceneStyle: { backgroundColor: theme.colors.background },
-        tabBarActiveTintColor: theme.colors.accent,
-        tabBarInactiveTintColor: theme.colors.textMuted,
+        headerShown: false,
+        sceneStyle: { backgroundColor: colors.background },
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: typography.tiny,
         tabBarStyle: {
-          backgroundColor: theme.colors.card,
-          borderTopColor: theme.colors.border,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          borderTopWidth: hairline,
         },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Library' }} />
-      <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon name="home-outline" color={color} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon name="settings-outline" color={color} focused={focused} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

@@ -1,7 +1,8 @@
-import { ScrollView, StyleSheet } from 'react-native';
+import { View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Row, Screen, Section } from '@/components/layout';
-import { theme } from '@/theme';
+import { Row, Screen, Section, Text } from '@/components/ui';
+import { useTheme } from '@/theme';
 
 /**
  * Settings screen — placeholder sections only.
@@ -11,9 +12,16 @@ import { theme } from '@/theme';
  * no value shown below is a claim about stored data.
  */
 export default function SettingsScreen() {
+  const { spacing } = useTheme();
+  const insets = useSafeAreaInsets();
+
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
+    <Screen scroll>
+      <View style={{ paddingTop: insets.top + spacing.xl, paddingBottom: spacing.xl }}>
+        <Text variant="displayLarge">Settings</Text>
+      </View>
+
+      <View style={{ gap: spacing.xxl, paddingBottom: spacing.xxxl }}>
         <Section title="Reading" description="Page layout and navigation while reading.">
           <Row label="Reading mode" value="Not configurable yet" />
           <Row label="Page orientation" value="Not configurable yet" />
@@ -21,7 +29,7 @@ export default function SettingsScreen() {
         </Section>
 
         <Section title="Appearance" description="Theme and page rendering.">
-          <Row label="Theme" value="Not configurable yet" />
+          <Row label="Theme" value="Follows system" />
           <Row label="Invert page colors" value="Not configurable yet" last />
         </Section>
 
@@ -34,14 +42,7 @@ export default function SettingsScreen() {
         <Section title="About">
           <Row label="Version" value="0.1.0" last />
         </Section>
-      </ScrollView>
+      </View>
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  content: {
-    padding: theme.spacing.md,
-    gap: theme.spacing.xl,
-  },
-});
