@@ -93,7 +93,8 @@ library-app/
 │   │   └── index.ts                  # data layer entry point (getRepositories)
 │   ├── files/                        # L3 — filesystem
 │   │   ├── storage.ts                # library dir layout, copy-in/delete, path resolver
-│   │   └── documentPicker.ts         # wraps expo-document-picker → DocumentPickerPort
+│   │   ├── documentPicker.ts         # wraps expo-document-picker → DocumentPickerPort
+│   │   └── pdfValidation.ts          # picked-PDF checks (extension/size/%PDF- header)
 │   ├── services/                     # L4
 │   │   ├── importService.ts          # pick → validate → copy → insert row (transactional)
 │   │   ├── bookService.ts            # delete book (row + file), rename, list ordering
@@ -301,6 +302,8 @@ Swapping libraries later = writing one new adapter in `src/pdf/adapters/` + flip
 ## 7. Core Flows (orchestration contracts)
 
 **Import:** route calls `useImportBooks()` → `importService.importFromPicker()`: `documentPicker.pick({ pdf })` → validate (extension/mime, size ≤ `config.maxImportBytes`) → `files.storage.copyIntoLibrary(contentUri, uuid)` (new FS API reads SAF `content://` directly; permission is session-scoped, hence copy immediately) → `bookRepository.insert(...)` in one logical step; failure at any stage cleans up partial artifacts.
+
+**Import validation order:** extension `.pdf` → file exists & non-empty → size ≤ 300 MB (`MAX_IMPORT_BYTES`, src/config) → first 5 bytes are `%PDF-` (read via FileHandle, never whole-file). A failed check resolves `{ status: 'invalid' }`; only I/O faults throw. Duplicate policy: exact stored-path/name match only — the same PDF content re-imported from a different path is a new book by product decision.
 
 **Continue reading:** reader route loads book + progress → passes `{ source, initialPosition }` to `PdfEngine.ViewComponent`; every `onPageChange` is debounced (`config.progressDebounceMs`) into `readingProgressService.save()`; leaving the screen flushes pending write.
 

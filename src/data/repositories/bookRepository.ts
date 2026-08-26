@@ -30,6 +30,8 @@ export interface BookRepository {
   list(sort?: BookSort): Promise<BookSummary[]>;
   updateMetadata(id: string, patch: BookMetadataPatch, now?: Date): Promise<Book>;
   updateProgress(id: string, lastPage: number, now?: Date): Promise<Book>;
+  /** Stamps lastOpenedAt/updatedAt without touching the page position. */
+  markOpened(id: string, now?: Date): Promise<Book>;
   remove(id: string): Promise<boolean>;
   count(): Promise<number>;
 }
@@ -126,6 +128,19 @@ export function createBookRepository(db: DatabaseConnection): BookRepository {
       const result = await db.runAsync(
         'UPDATE books SET last_page = ?, last_opened_at = ?, updated_at = ? WHERE id = ?',
         [lastPage, timestamp, timestamp, id],
+      );
+      if (result.changes === 0) {
+        throw new DomainError('book_not_found', `No book with id ${id}`);
+      }
+
+      return requireById(id);
+    },
+
+    async markOpened(id, now = new Date()) {
+      const timestamp = now.getTime();
+      const result = await db.runAsync(
+        'UPDATE books SET last_opened_at = ?, updated_at = ? WHERE id = ?',
+        [timestamp, timestamp, id],
       );
       if (result.changes === 0) {
         throw new DomainError('book_not_found', `No book with id ${id}`);
