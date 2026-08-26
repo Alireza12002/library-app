@@ -50,4 +50,25 @@ module.exports = defineConfig([
       ],
     },
   },
+  // SQL and the SQLite driver stay inside the data layer (ARCHITECTURE.md §3).
+  // Only src/data/db may import expo-sqlite; repositories talk to the
+  // DatabaseConnection port instead.
+  {
+    files: ['src/**/*.{ts,tsx}', 'app/**/*.{ts,tsx}'],
+    ignores: ['src/data/db/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'expo-sqlite',
+              message:
+                'Only src/data/db may import expo-sqlite. Use the repositories or the DatabaseConnection port (ARCHITECTURE.md §3).',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);

@@ -82,12 +82,15 @@ library-app/
 │   │   └── ids.ts                    # uuid helper
 │   ├── data/                         # L3 — persistence
 │   │   ├── db/
-│   │   │   ├── client.ts             # single sqlite connection, WAL
-│   │   │   └── migrations/           # numbered, forward-only SQL migrations
-│   │   └── repositories/
-│   │       ├── bookRepository.ts
-│   │       ├── bookmarkRepository.ts
-│   │       └── readingProgressRepository.ts
+│   │   │   ├── client.ts             # single sqlite connection, WAL, foreign_keys
+│   │   │   ├── connection.ts         # DatabaseConnection port (test seam)
+│   │   │   ├── migrate.ts            # user_version-based migration runner
+│   │   │   └── migrations/           # numbered, forward-only, append-only registry
+│   │   ├── repositories/
+│   │   │   ├── bookRepository.ts
+│   │   │   ├── bookmarkRepository.ts
+│   │   │   └── mappers.ts            # row ↔ entity translation
+│   │   └── index.ts                  # data layer entry point (getRepositories)
 │   ├── files/                        # L3 — filesystem
 │   │   ├── storage.ts                # library dir layout, copy-in/delete, path resolver
 │   │   └── documentPicker.ts         # wraps expo-document-picker → DocumentPickerPort
@@ -157,15 +160,19 @@ Light palette values are **pixel-measured** from the reference design. The dark 
 
 ```ts
 // core/entities
-Book              { id: string(uuid); title: string; fileName: string;
-                    storedPath: string;      // absolute file:// URI of the private copy
-                    fileSizeBytes: number;
-                    addedAt: Date; updatedAt: Date }
-ReadingProgress   { bookId: string;         // FK, UNIQUE — 1:1 with Book
-                    lastPageIndex: number;   // 0-based
-                    lastReadAt: Date }
-Bookmark          { id: string(uuid); bookId: string; pageIndex: number;
-                    label?: string; createdAt: Date }   // UNIQUE(bookId, pageIndex)
+Book              { id: string(uuid); title: string;
+                    author: string | null;    // unknown until metadata is parsed
+                    fileUri: string;          // absolute file:// URI of the private copy
+                    fileName: string;
+                    fileSize: number;
+                    pageCount: number | null; // unknown until the reader reports it
+                    lastPage: number;         // 0-based, defaults to 0
+                    createdAt: Date; updatedAt: Date;
+                    lastOpenedAt: Date | null } // null until first opened
+Bookmark          { id: string(uuid); bookId: string;
+                    page: number;             // 0-based
+                    title: string | null; note: string | null;
+                    createdAt: Date }         // UNIQUE(bookId, page)
 ReadingSettings   { id: 'default';          // single-row table
                     mode: 'pdf' | 'reflow';
                     theme: 'light' | 'sepia' | 'dark';
@@ -176,40 +183,53 @@ ExtractedPage?    { id; bookId; pageIndex; text; extractedAt }  // cache table, 
 
 ```sql
 CREATE TABLE books (
-  id TEXT PRIMARY KEY NOT NULL,
-  title TEXT NOT NULL,
-  file_name TEXT NOT NULL,
-  stored_path TEXT NOT NULL UNIQUE,
-  file_size_bytes INTEGER NOT NULL,
-  added_at INTEGER NOT NULL,          -- unix ms
-  updated_at INTEGER NOT NULL
+  id             TEXT PRIMARY KEY NOT NULL,
+  title          TEXT NOT NULL CHECK (length(trim(title)) > 0),
+  author         TEXT,
+  file_uri       TEXT NOT NULL UNIQUE,
+  file_name      TEXT NOT NULL,
+  file_size      INTEGER NOT NULL CHECK (file_size >= 0),
+  page_count     INTEGER CHECK (page_count IS NULL OR page_count > 0),
+  last_page      INTEGER NOT NULL DEFAULT 0 CHECK (last_page >= 0),
+  created_at     INTEGER NOT NULL,          -- unix ms
+  updated_at     INTEGER NOT NULL,
+  last_opened_at INTEGER
 );
-CREATE TABLE reading_progress (
-  book_id TEXT PRIMARY KEY NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-  last_page_index INTEGER NOT NULL DEFAULT 0,
-  last_read_at INTEGER NOT NULL
-);
+CREATE INDEX idx_books_last_opened_at ON books (last_opened_at DESC);
+CREATE INDEX idx_books_created_at ON books (created_at DESC);
+CREATE INDEX idx_books_title ON books (title COLLATE NOCASE);
+
 CREATE TABLE bookmarks (
-  id TEXT PRIMARY KEY NOT NULL,
-  book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-  page_index INTEGER NOT NULL,
-  label TEXT,
+  id         TEXT PRIMARY KEY NOT NULL,
+  book_id    TEXT NOT NULL REFERENCES books (id) ON DELETE CASCADE,
+  page       INTEGER NOT NULL CHECK (page >= 0),
+  title      TEXT,
+  note       TEXT,
   created_at INTEGER NOT NULL,
-  UNIQUE(book_id, page_index)
+  UNIQUE (book_id, page)
 );
+CREATE INDEX idx_bookmarks_book_id_page ON bookmarks (book_id, page);
+
 CREATE TABLE reading_settings (
-  id TEXT PRIMARY KEY CHECK (id = 'default'),
-  mode TEXT NOT NULL DEFAULT 'pdf',
-  theme TEXT NOT NULL DEFAULT 'light',
-  font_family TEXT NOT NULL DEFAULT 'system',
-  font_size_pt REAL NOT NULL DEFAULT 16,
-  line_height REAL NOT NULL DEFAULT 1.5,
-  invert_pages INTEGER NOT NULL DEFAULT 0
+  id           TEXT PRIMARY KEY NOT NULL CHECK (id = 'default'),
+  mode         TEXT NOT NULL DEFAULT 'pdf' CHECK (mode IN ('pdf', 'reflow')),
+  theme        TEXT NOT NULL DEFAULT 'light' CHECK (theme IN ('light', 'sepia', 'dark')),
+  font_family  TEXT NOT NULL DEFAULT 'system',
+  font_size_pt REAL NOT NULL DEFAULT 16 CHECK (font_size_pt > 0),
+  line_height  REAL NOT NULL DEFAULT 1.5 CHECK (line_height > 0),
+  invert_pages INTEGER NOT NULL DEFAULT 0 CHECK (invert_pages IN (0, 1))
 );
+INSERT INTO reading_settings (id) VALUES ('default');
 -- Phase 7 adds: extracted_pages(book_id, page_index, text, extracted_at)
 ```
 
-Rules: timestamps as unix-ms integers; all writes through repositories; migrations forward-only, never edited once shipped.
+Rules: timestamps as unix-ms integers; **page numbers are 0-based everywhere** (matching the PDF engine's `onPageChange`, so UI adds 1 when displaying); all writes through repositories; migrations forward-only, never edited once shipped.
+
+Reading progress lives on `books` (`last_page`, `last_opened_at`) rather than in a separate 1:1 table — one row per book, one write per page turn.
+
+### Schema versioning
+
+`user_version` is the schema version: no bookkeeping table, and it commits atomically with the migration that set it. `src/data/db/migrations/index.ts` is the append-only registry; `runMigrations` applies each pending entry inside its own transaction, so a failure leaves the database at the last good version rather than half-migrated. A database newer than the running build is refused rather than downgraded.
 
 ---
 
@@ -311,10 +331,12 @@ Swapping libraries later = writing one new adapter in `src/pdf/adapters/` + flip
 
 - **L1 core:** pure unit tests (no mocks needed).
 - **Services:** unit tests with in-memory repository/port fakes (interfaces make this trivial); fake clock/debounce.
-- **Repositories:** tests against real `expo-sqlite` in-memory DB (`SQLiteProvider`/`:memory:`) under jest-expo.
+- **Repositories:** tests against a real in-memory SQLite database. **Runner: Node's built-in `node:test` + `node:sqlite`** (`npm test`) — same SQLite engine expo-sqlite wraps on device, so constraints, FK cascades and collations behave identically, with no emulator, no native build and no extra dependency. `tests/helpers/testDb.ts` adapts `node:sqlite` to the `DatabaseConnection` port and applies the real migrations. `scripts/test-resolver.mjs` teaches Node the `@/*` alias and extensionless/directory imports.
+  - Constraint: Node runs TS in **strip-only** mode — test-side code must avoid parameter properties, enums and other syntax needing codegen.
+  - Device-level coverage (jest-expo + `@testing-library/react-native` for component tests) is still unwired; add it when presentation logic needs testing.
 - **Adapters (pdf/storage/picker):** thin; covered by contract tests asserting mapping to/from port types; device-level behavior validated manually via dev build checklist per phase.
-- **Presentation:** `@testing-library/react-native` render tests with mocked service hooks.
-- CI gate on every PR: `tsc --noEmit` && `eslint .` && `jest`. Failures are fixed, never suppressed (`@ts-ignore`/eslint-disable require justification in review).
+- **Presentation:** not yet testable — see above.
+- CI gate on every PR: `npm run typecheck` && `npm run lint` && `npm test`. Failures are fixed, never suppressed (`@ts-ignore`/eslint-disable require justification in review).
 
 ---
 
@@ -325,7 +347,7 @@ Each phase ends with green typecheck + lint + tests and a short manual device ch
 | Phase | Deliverable | Done when |
 |---|---|---|
 | **0. Scaffold** | create-expo-app (SDK 57), TS strict, ESLint/Prettier, folder skeleton, aliases, jest-expo wired, GitHub Actions CI, `eas.json` (development/profile/production, Android) | CI green on hello-world; dev build installs |
-| **1. Persistence core** | db client + migration 001 + three repositories + settings row | repo unit tests pass against in-memory sqlite |
+| **1. Persistence core** | db client + migration 001 + book/bookmark repositories + settings row | repo unit tests pass against in-memory sqlite (`npm test`) |
 | **2. Import + Library** | picker port, storage, `importService`, library list screen | pick PDF → appears in list; app restart keeps it; duplicate/corrupt handled |
 | **3. Reader MVP** | PdfEngine port + expo-pdf adapter, reader screen, progress saving (debounced) | open book → renders; page turns persist across reopen |
 | **4. Jump-to-page (R1 spike)** | resolve continue-reading mechanism; update capability flag | opening a mid-book item lands on saved page |

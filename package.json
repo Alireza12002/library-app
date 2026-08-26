@@ -8,7 +8,8 @@
     "android": "no-java expo start --android",
     "ios": "no-java expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "node --import ./scripts/test-resolver.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/**/*.test.ts",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --check .",
     "format:write": "prettier --write ."

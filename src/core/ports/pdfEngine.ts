@@ -13,7 +13,7 @@ export interface PdfSource {
 }
 
 export interface PdfPagePosition {
-  /** 0-based page index, consistent with the domain (ReadingProgress). */
+  /** 0-based page index, consistent with the domain (Book.lastPage). */
   pageIndex: number;
   pageCount: number;
 }
