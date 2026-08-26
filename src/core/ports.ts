@@ -91,4 +91,4 @@ export interface DocumentPickerPort {
 }
 
 // Convenience re-export so ports can be referenced without importing errors.ts everywhere.
-export { DomainError };
+export type { DomainError };

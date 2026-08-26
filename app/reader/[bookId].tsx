@@ -1,41 +1,26 @@
-import { LocalRouteParams, useLocalSearchParams, Stack } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { Stack, useLocalSearchParams } from 'expo-router';
 
-import { theme } from '@/theme';
+import { EmptyState, Screen } from '@/components/layout';
 
-type ReaderParams = LocalRouteParams<{
-  bookId: string;
-}>;
-
-// Placeholder screen. The PdfEngine-backed reader arrives in Phase 3
-// (docs/ARCHITECTURE.md §10). It must stay presentation-only.
+/**
+ * Reader route — placeholder.
+ *
+ * The PdfEngine-backed reader arrives in Phase 3 (docs/ARCHITECTURE.md §10).
+ * This route only proves the navigation target resolves; it must not touch the
+ * PDF adapter, storage or progress services.
+ */
 export default function ReaderScreen() {
-  const { bookId } = useLocalSearchParams<ReaderParams>();
+  const { bookId } = useLocalSearchParams<'/reader/[bookId]'>();
 
   return (
-    <View style={styles.container}>
+    <>
       <Stack.Screen options={{ headerShown: true, title: 'Reader' }} />
-      <Text style={styles.title}>Reader</Text>
-      <Text style={styles.subtitle}>Book id: {bookId ?? '—'}</Text>
-    </View>
+      <Screen center edgeToEdgeBottom>
+        <EmptyState
+          title="Reader not implemented"
+          description={`This route is a placeholder for book ${bookId}. PDF rendering lands in a later phase.`}
+        />
+      </Screen>
+    </>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: theme.colors.background,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: theme.colors.text,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: theme.colors.textMuted,
-  },
-});

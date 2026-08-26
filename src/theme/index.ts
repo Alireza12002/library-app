@@ -19,6 +19,13 @@ export const theme = {
     lg: 24,
     xl: 32,
   },
+  typography: {
+    title: { fontSize: 28, fontWeight: '700' },
+    heading: { fontSize: 20, fontWeight: '600' },
+    label: { fontSize: 16, fontWeight: '500' },
+    body: { fontSize: 15, fontWeight: '400' },
+    caption: { fontSize: 13, fontWeight: '400' },
+  },
 } as const;
 
 export type Theme = typeof theme;

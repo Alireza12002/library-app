@@ -9,12 +9,7 @@
  */
 import type { ComponentType } from 'react';
 
-import type {
-  PdfEngine,
-  PdfEngineCapabilities,
-  PdfEngineError,
-  PdfEngineViewProps,
-} from '@/core/ports';
+import type { PdfEngine, PdfEngineCapabilities, PdfEngineViewProps } from '@/core/ports';
 
 export const EXPO_PDF_CAPABILITIES: PdfEngineCapabilities = {
   jumpToInitialPage: false,

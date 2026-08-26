@@ -1,15 +1,11 @@
-import { LocalRouteParams, useLocalSearchParams, Link, Stack } from 'expo-router';
+import { useLocalSearchParams, Link, Stack } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '@/theme';
 
-type BookDetailsParams = LocalRouteParams<{
-  id: string;
-}>;
-
 // Placeholder screen. Book details arrive in Phase 2/5 (docs/ARCHITECTURE.md §10).
 export default function BookDetailsScreen() {
-  const { id } = useLocalSearchParams<BookDetailsParams>();
+  const { id } = useLocalSearchParams<'/book/[id]'>();
 
   return (
     <View style={styles.container}>

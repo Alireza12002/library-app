@@ -1,0 +1,47 @@
+import { ScrollView, StyleSheet } from 'react-native';
+
+import { Row, Screen, Section } from '@/components/layout';
+import { theme } from '@/theme';
+
+/**
+ * Settings screen — placeholder sections only.
+ *
+ * Every row is static: the real controls are wired to settingsService in
+ * Phase 8 (docs/ARCHITECTURE.md §10). Nothing here reads or writes state, so
+ * no value shown below is a claim about stored data.
+ */
+export default function SettingsScreen() {
+  return (
+    <Screen>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Section title="Reading" description="Page layout and navigation while reading.">
+          <Row label="Reading mode" value="Not configurable yet" />
+          <Row label="Page orientation" value="Not configurable yet" />
+          <Row label="Fit mode" value="Not configurable yet" last />
+        </Section>
+
+        <Section title="Appearance" description="Theme and page rendering.">
+          <Row label="Theme" value="Not configurable yet" />
+          <Row label="Invert page colors" value="Not configurable yet" last />
+        </Section>
+
+        <Section title="Typography" description="Applies to reflow mode once it exists.">
+          <Row label="Font" value="Not configurable yet" />
+          <Row label="Font size" value="Not configurable yet" />
+          <Row label="Line height" value="Not configurable yet" last />
+        </Section>
+
+        <Section title="About">
+          <Row label="Version" value="0.1.0" last />
+        </Section>
+      </ScrollView>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: {
+    padding: theme.spacing.md,
+    gap: theme.spacing.xl,
+  },
+});

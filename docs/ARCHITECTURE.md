@@ -64,14 +64,15 @@ Hard rules:
 ```
 library-app/
 ├── app/                              # Expo Router — routes ONLY, presentation/orchestration
-│   ├── _layout.tsx                   # root stack
-│   ├── index.tsx                     # → redirects to /(library)
-│   ├── (library)/
-│   │   └── index.tsx                 # book grid/list, import button
+│   ├── _layout.tsx                   # root stack (SafeAreaProvider) — (tabs) + pushed routes
+│   ├── (tabs)/
+│   │   ├── _layout.tsx               # bottom tab bar: Library, Settings
+│   │   ├── index.tsx                 # Library: book grid/list, import button
+│   │   └── settings.tsx              # reading/appearance/typography preferences
 │   ├── book/
 │   │   └── [id].tsx                  # book details, actions, bookmark list entry point
 │   └── reader/
-│       └── [bookId].tsx              # PDF mode + reflow mode host
+│       └── [bookId].tsx              # PDF mode + reflow mode host (pushed above the tabs)
 ├── src/
 │   ├── core/                         # L1 — pure TS
 │   │   ├── entities/                 # Book, Bookmark, ReadingProgress, ReadingSettings
@@ -105,6 +106,7 @@ library-app/
 │   │   ├── book-detail/
 │   │   ├── reader/                   # components/ (PdfScreen, ReflowScreen), hooks/
 │   │   └── settings/                 # typography & theme controls (later phase)
+│   ├── components/layout/            # shared primitives (Screen, EmptyState, Section, Row)
 │   ├── theme/                        # tokens, dark/light, typography scale
 │   └── config/                       # constants: limits, debounce ms, storage dirs
 ├── assets/
@@ -131,7 +133,8 @@ Import-alias: `@/*` → `src/*` (and routes use relative or `@/`).
 | `pdf/` | PdfEngine port impl, engine selection | core/ports, `@kishannareshpal/expo-pdf` | data, services, features |
 | `services/` | business rules, orchestration | core, repositories, files, pdf/engine | RN components, `app/` routes |
 | `features/*` | UI components + hooks | services (public fns), core/entities, theme | direct sqlite/fs/pdf-lib usage |
-| `app/` | routing, screen composition | features, services (via hooks) | repositories, db, fs, pdf adapter |
+| `components/layout` | shared presentation primitives | `theme`, react-native | services, core entities, data, files, pdf |
+| `app/` | routing, screen composition | features, `components/layout`, services (via hooks) | repositories, db, fs, pdf adapter |
 
 Cross-module communication happens **through `core/ports` interfaces**, so any adapter (PDF lib, storage, picker) can be swapped without touching services or UI.
 
@@ -208,6 +211,8 @@ Rules: timestamps as unix-ms integers; all writes through repositories; migratio
 | `expo-file-system` | persistent PDF storage | given |
 | `expo-document-picker` | import flow | given |
 | `@kishannareshpal/expo-pdf@0.3.2` | PDF rendering (verified above) | only native PDF option that is Expo-Module based, actively published, zero JS deps |
+| `react-native-safe-area-context` | safe-area insets | **required peer of `expo-router`** — `expo-router` imports `SafeAreaProvider` at module load and the vendored bottom-tabs/native-stack views require it; the app cannot boot without it. Installed via `npx expo install` (SDK-pinned) |
+| `expo-linking` | deep-link URL handling | **required peer of `expo-router`**; backs the `library://` scheme declared in `app.json`. Installed via `npx expo install` (SDK-pinned) |
 | `zustand` | **deferred until a real need appears** | expected candidate: reader UI state shared across PdfScreen/ReflowScreen chrome. Do not add until a hook-local state demonstrably fails |
 
 ### Dev
