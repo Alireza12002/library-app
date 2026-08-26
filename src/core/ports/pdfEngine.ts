@@ -2,6 +2,10 @@
  * PdfEngine port — ARCHITECTURE.md §6.
  * The ONLY contract through which the app touches PDF technology.
  * Concrete adapters live in src/pdf/adapters/ and are resolved via src/pdf/engine.ts.
+ *
+ * PAGE NUMBERING: domain page indexes are 0-BASED (Book.lastPage, onPageChange).
+ * `PdfEngineController.setPage` is 1-BASED to match renderer conventions; the
+ * adapter converts at this boundary. Screens never do arithmetic.
  */
 import type { ComponentType } from 'react';
 
@@ -28,6 +32,7 @@ export type PdfEngineErrorCode =
   | 'invalid_document'
   | 'password_required'
   | 'password_incorrect'
+  | 'file_missing'
   | 'unknown';
 
 export interface PdfEngineError {
@@ -43,10 +48,8 @@ export interface PdfEngineError {
 export interface PdfEngineViewProps {
   source: PdfSource;
   /**
-   * Position to open the document at. OPTIONAL AND CAPABILITY-GATED:
-   * engines that cannot jump to a page may ignore it (see
-   * `PdfEngineCapabilities.jumpToInitialPage`). Known gap in
-   * @kishannareshpal/expo-pdf 0.3.2 — Phase 4 spike (ARCHITECTURE.md R1).
+   * Position to open the document at (0-based). Honored only when
+   * `capabilities.jumpToInitialPage` is true; otherwise ignored.
    */
   initialPosition?: { pageIndex: number };
   horizontal?: boolean;
@@ -57,19 +60,33 @@ export interface PdfEngineViewProps {
   onLoad?: (info: PdfLoadInfo) => void;
   onPageChange?: (position: PdfPagePosition) => void;
   onError?: (error: PdfEngineError) => void;
+  /**
+   * Adapter-only escape hatch: the host's mutable box that receives the
+   * imperative navigation handle. Screens pass it through opaquely; it is NOT
+   * part of the engine-neutral surface and adapters may ignore it.
+   */
+  controllerBox?: { current: PdfEngineController | null };
 }
 
-/** Thrown by capability accessors when an engine lacks a feature. */
-export class UnsupportedCapabilityError extends Error {
-  constructor(capability: string) {
-    super(`PDF engine does not support: ${capability}`);
-    this.name = 'UnsupportedCapabilityError';
-  }
+/**
+ * Imperative handle for engines with programmatic navigation
+ * (`capabilities.programmaticNavigation === true`).
+ *
+ * PAGE CONVENTION: takes a 0-BASED domain page index, exactly like everything
+ * else above the port. Any conversion to renderer-native numbering happens
+ * INSIDE the adapter — never in a screen.
+ */
+export interface PdfEngineController {
+  setPage(pageIndex: number): void;
 }
 
 export interface PdfEngineCapabilities {
-  /** Can the engine open a document at a given page? */
+  /** Can the engine open a document directly at a given page? */
   jumpToInitialPage: boolean;
+  /** Can the caller navigate to an arbitrary page after mount? */
+  programmaticNavigation: boolean;
+  /** Does the engine provide native pinch-to-zoom? */
+  pinchZoom: boolean;
   /** Can the engine extract raw text from pages? */
   textExtraction: boolean;
 }

@@ -71,4 +71,28 @@ module.exports = defineConfig([
       ],
     },
   },
+  // The PDF library stays behind the PdfEngine port (ARCHITECTURE.md §6).
+  {
+    files: ['src/**/*.{ts,tsx}', 'app/**/*.{ts,tsx}'],
+    ignores: ['src/pdf/adapters/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'react-native-pdf',
+              message:
+                'Only src/pdf/adapters may import react-native-pdf. Use getPdfEngine() / PdfEngineViewProps (ARCHITECTURE.md §6).',
+            },
+            {
+              name: 'react-native-blob-util',
+              message:
+                'react-native-blob-util is a react-native-pdf implementation detail; only its adapter may touch it.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);

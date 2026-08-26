@@ -13,9 +13,36 @@
 | `expo-sqlite` | 57.0.x | New type-safe API |
 | `expo-file-system` | 57.0.x | New `File`/`Directory` API only — legacy API is forbidden |
 | `expo-document-picker` | 57.0.x | Returns Android SAF `content://` URIs |
-| `@kishannareshpal/expo-pdf` | **0.3.2** (2026-03-24) | Chosen PDF engine, behind `PdfEngine` port |
+| `react-native-pdf` | **7.0.5** (2026-08-13) | Chosen PDF engine, behind `PdfEngine` port. Replaced `@kishannareshpal/expo-pdf@0.3.2` (see §0.1) |
+| `react-native-blob-util` | 0.24.x | Required companion of react-native-pdf (its file transport) |
 
 ### PDF library verification results (from npm package + Kotlin source inspection)
+
+### 0.1 Engine replacement: expo-pdf → react-native-pdf (decided 2026-08-26)
+
+`@kishannareshpal/expo-pdf@0.3.2` was removed. Verified from its actual native
+source (Kotlin + Swift) that it exposes **no initial-page prop and no imperative
+jump-to-page** — its module definition declares zero `Function()` entries, and
+every Android prop setter calls `reloadPdf()`, which always restarts at page 1.
+Resume-to-last-page is a core product requirement, so the engine was swapped for
+**react-native-pdf@7.0.5**, which provides:
+
+- `page` prop (1-based) honored on mount → resume-to-page works;
+- ref `setPage(n)` imperative navigation;
+- `onPageChanged(page, pageCount)` (1-based → converted at the adapter);
+- `fitPolicy` 0/1/2 ↔ width/height/both; `horizontal`; `enablePaging`;
+- zoom via native pinch + `enableDoubleTapZoom`.
+
+Engine stays behind the `PdfEngine` port (`src/pdf/adapters/reactNativePdfAdapter.tsx`
+is the only file allowed to import it — ESLint-enforced). Capability flags now
+read: `jumpToInitialPage: true`, `programmaticNavigation: true`,
+`pinchZoom: true`, `textExtraction: false` (unchanged until Phase 7).
+
+Compatibility notes: requires `react-native-blob-util` (peer ≥ 0.13.7);
+Android build pulls `AndroidPdfViewer` + pdfium from **jitpack.io** (present in
+generated gradle after prebuild); New-Architecture support is reported partial
+on iOS — verify on a device build before shipping iOS. Local files are passed
+directly as `file://` URIs so blob-util caching is bypassed.
 
 **Compatible:** zero runtime JS dependencies; peers `expo`/`react`/`react-native`; ships an Expo Module (works with EAS dev builds, not Expo Go); Android implementation wraps the author's maintained `AndroidPdfViewer` fork over `io.legere:pdfiumandroid:1.0.32`.
 
@@ -244,7 +271,9 @@ Reading progress lives on `books` (`last_page`, `last_opened_at`) rather than in
 | `expo-sqlite` | structured local data | given |
 | `expo-file-system` | persistent PDF storage | given |
 | `expo-document-picker` | import flow | given |
-| `@kishannareshpal/expo-pdf@0.3.2` | PDF rendering (verified above) | only native PDF option that is Expo-Module based, actively published, zero JS deps |
+| `@kishannareshpal/expo-pdf@0.3.2` | ~~removed~~ | replaced by react-native-pdf 7.0.5 — see §0.1 |
+| `react-native-pdf@7.0.5` | PDF rendering (jump-to-page, page events, zoom) | only maintained option meeting all requirements: local files, current-page callbacks, programmatic navigation, initial page, zoom, large files, Android+iOS, EAS dev builds |
+| `react-native-blob-util@0.24.x` | file transport for react-native-pdf | hard peer dependency of react-native-pdf (≥ 0.13.7) |
 | `react-native-safe-area-context` | safe-area insets | **required peer of `expo-router`** — `expo-router` imports `SafeAreaProvider` at module load and the vendored bottom-tabs/native-stack views require it; the app cannot boot without it. Installed via `npx expo install` (SDK-pinned) |
 | `expo-linking` | deep-link URL handling | **required peer of `expo-router`**; backs the `library://` scheme declared in `app.json`. Installed via `npx expo install` (SDK-pinned) |
 | `@expo/vector-icons` | UI icons | design system needs an outline icon set (tab bar, icon buttons, empty states); ships as part of the Expo SDK — no third-party version risk, no extra native config. Ionicons outline set matches the reference design |
@@ -317,7 +346,7 @@ Swapping libraries later = writing one new adapter in `src/pdf/adapters/` + flip
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | expo-pdf 0.3.2 has **no jump-to-page API** (verified in source) | "continue reading" UX | Phase 4 spike: (a) remount-with-key at target page via internal scroll assumptions, (b) upstream contribution/patch-package adding `initialPage` (trivial in `reloadPdf()`), or (c) fork. Abstraction already models it as a capability flag |
+| R1 | ~~expo-pdf 0.3.2 has no jump-to-page API~~ **RESOLVED 2026-08-26**: engine replaced with react-native-pdf 7.0.5 (see §0.1). `page` prop + `setPage()` give initial-page and programmatic navigation. Capability flags updated | — | — |
 | R2 | No text extraction in viewer lib | Goal #9 | Phase 7 thin Expo module `pdf-text` over `io.legere:pdfiumandroid` (already in the dependency graph via expo-pdf — no second pdfium) |
 | R3 | Single-maintainer pre-1.0 PDF lib | maintenance | Port isolation (§6); adapter swap is contained |
 | R4 | Pdfium bitmap memory on large PDFs / low-end Android | OOM crashes | paging enabled, fitMode width, import size warning, test on 2 GB-RAM device profile, avoid keeping two readers mounted |

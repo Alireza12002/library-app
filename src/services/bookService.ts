@@ -25,6 +25,10 @@ export interface BookServiceDeps {
 export interface BookService {
   /** The library list, ordered per `sort` (default: recently opened). */
   listBooks(sort?: BookSort): Promise<BookSummary[]>;
+  /** Resolves a book by id, or null when it does not exist. */
+  getBook(id: string): Promise<Book | null>;
+  /** True when the stored PDF is still on disk. */
+  isFileAvailable(id: string): Promise<boolean>;
   /** Records that the user opened the book now. */
   openBook(id: string): Promise<void>;
   /**
@@ -38,6 +42,21 @@ export function createBookService(deps: BookServiceDeps): BookService {
   return {
     listBooks(sort?: BookSort): Promise<BookSummary[]> {
       return deps.listBooks(sort);
+    },
+
+    async getBook(id: string): Promise<Book | null> {
+      return deps.getBook(id);
+    },
+
+    async isFileAvailable(id: string): Promise<boolean> {
+      const book = await deps.getBook(id);
+      if (!book) return false;
+      try {
+        return await deps.storage.exists(book.fileUri);
+      } catch {
+        // An unreadable storage layer means we cannot promise the file exists.
+        return false;
+      }
     },
 
     async openBook(id: string): Promise<void> {
