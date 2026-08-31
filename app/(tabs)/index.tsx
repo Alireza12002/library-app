@@ -2,6 +2,7 @@ import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, EmptyState, Screen, Text } from '@/components/ui';
+import type { BookSummary } from '@/core/entities/book';
 import { BookCard } from '@/features/library/components';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useTheme } from '@/theme';
@@ -24,6 +25,10 @@ export default function LibraryScreen() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => void deleteBook(id) },
     ]);
+  };
+
+  const handleBookPress = (book: BookSummary) => {
+    void openBook(book.id);
   };
 
   return (
@@ -72,11 +77,8 @@ export default function LibraryScreen() {
               <BookCard
                 key={book.id}
                 book={book}
-                onPress={() => {
-                  // Navigation to the reader arrives in Phase 3; for now the tap
-                  // records the open so recency ordering stays truthful.
-                  void openBook(book.id);
-                }}
+                onPress={() => handleBookPress(book)}
+                onContinueReading={book.lastPage > 0 ? () => handleBookPress(book) : undefined}
                 onDelete={() => confirmDelete(book.id, book.title)}
               />
             ))}

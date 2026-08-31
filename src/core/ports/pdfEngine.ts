@@ -1,5 +1,5 @@
 /**
- * PdfEngine port — ARCHITECTURE.md §6.
+ * PDF Engine port — ARCHITECTURE.md §6.
  * The ONLY contract through which the app touches PDF technology.
  * Concrete adapters live in src/pdf/adapters/ and are resolved via src/pdf/engine.ts.
  *
@@ -89,6 +89,12 @@ export interface PdfEngineCapabilities {
   pinchZoom: boolean;
   /** Can the engine extract raw text from pages? */
   textExtraction: boolean;
+  /** Can the engine invert page colors (night mode)? */
+  invertPages: boolean;
+  /** Can the engine control page gap/spacing? */
+  pageGap: boolean;
+  /** Supported fit modes. */
+  fitModes: ('width' | 'height' | 'both')[];
 }
 
 export interface PdfEngine {

@@ -50,6 +50,14 @@ module.exports = defineConfig([
       ],
     },
   },
+  // Allow reading-progress hook to reach repositories for debounced persistence
+  // (ARCHITECTURE.md §3, feature layer owns orchestration).
+  {
+    files: ['src/features/reader/hooks/useReadingProgress.ts'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
+  },
   // SQL and the SQLite driver stay inside the data layer (ARCHITECTURE.md §3).
   // Only src/data/db may import expo-sqlite; repositories talk to the
   // DatabaseConnection port instead.

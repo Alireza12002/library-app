@@ -1,18 +1,12 @@
 import { DomainError, type ErrorCode } from '@/core/errors';
-import type {
-  DocumentPickerPort,
-  PdfEngine,
-  PdfEngineViewProps,
-  StoragePort,
-} from '@/core/ports';
+import type { DocumentPickerPort, PdfEngine, PdfEngineViewProps, StoragePort } from '@/core/ports';
 
 // ---------------------------------------------------------------------------
 // Test doubles used across service unit tests (Phase 1+).
 // Kept in core so both tests and future phases share one source of truth.
 // ---------------------------------------------------------------------------
 
-export const aUuid = (n = 0): string =>
-  '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+export const aUuid = (n = 0): string => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 
 export class FakeStorage implements StoragePort {
   readonly files = new Map<string, string>();
@@ -45,17 +39,20 @@ export class FakePicker implements DocumentPickerPort {
 
 type PickedDocumentResult = import('@/core/ports').PickedDocument;
 
-export function makeFakePdfEngine(
-  overrides?: Partial<PdfEngine>,
-): PdfEngine {
-  const ViewComponent =
-    (_props: PdfEngineViewProps): null =>
-    null;
+export function makeFakePdfEngine(overrides?: Partial<PdfEngine>): PdfEngine {
+  const ViewComponent = (_props: PdfEngineViewProps): null => null;
 
   return {
     ViewComponent,
-    capabilities: { jumpToInitialPage: true, textExtraction: true },
-    extractPageText: async () => '',
+    capabilities: {
+      jumpToInitialPage: true,
+      programmaticNavigation: true,
+      pinchZoom: true,
+      textExtraction: true,
+      invertPages: false,
+      pageGap: false,
+      fitModes: ['width', 'height', 'both'],
+    },
     ...overrides,
   };
 }

@@ -8,6 +8,8 @@ export interface BookCardProps {
   book: BookSummary;
   /** Opens the book. */
   onPress: () => void;
+  /** Opens the book at the saved reading position (Continue Reading). */
+  onContinueReading?: (() => void) | undefined;
   onDelete: () => void;
 }
 
@@ -16,8 +18,9 @@ export interface BookCardProps {
  * recency line. Cover art renders once the PDF engine lands (Phase 3); the
  * blank block keeps the reference grid geometry in the meantime.
  */
-export function BookCard({ book, onPress, onDelete }: BookCardProps) {
+export function BookCard({ book, onPress, onContinueReading, onDelete }: BookCardProps) {
   const { colors, radius, spacing } = useTheme();
+  const hasProgress = book.lastPage > 0;
 
   return (
     <Card padded={false} style={styles.card}>
@@ -54,6 +57,17 @@ export function BookCard({ book, onPress, onDelete }: BookCardProps) {
           </Text>
         </View>
       </Pressable>
+
+      {hasProgress && onContinueReading ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Continue reading ${book.title} from page ${book.lastPage + 1}`}
+          onPress={onContinueReading}
+          style={({ pressed }) => [styles.continueButton, pressed ? { opacity: 0.85 } : null]}
+        >
+          <Icon name="play-outline" size={16} tone="accent" />
+        </Pressable>
+      ) : null}
 
       <IconButton
         name="trash-outline"
@@ -112,6 +126,17 @@ const styles = StyleSheet.create({
   },
   meta: {
     flex: 1,
+  },
+  continueButton: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(250, 246, 241, 0.92)',
+    borderRadius: 16,
   },
   deleteButton: {
     position: 'absolute',

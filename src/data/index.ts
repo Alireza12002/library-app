@@ -11,6 +11,10 @@ import {
   type BookmarkRepository,
 } from './repositories/bookmarkRepository';
 import { createBookRepository, type BookRepository } from './repositories/bookRepository';
+import {
+  createTextCacheRepository,
+  type TextCacheRepository,
+} from './repositories/textCacheRepository';
 
 export { getDatabase, resetDatabaseForTesting, DATABASE_NAME } from './db/client';
 export { runMigrations, getSchemaVersion } from './db/migrate';
@@ -21,10 +25,15 @@ export {
   createBookmarkRepository,
   type BookmarkRepository,
 } from './repositories/bookmarkRepository';
+export {
+  createTextCacheRepository,
+  type TextCacheRepository,
+} from './repositories/textCacheRepository';
 
 export interface Repositories {
   books: BookRepository;
   bookmarks: BookmarkRepository;
+  textCache: TextCacheRepository;
 }
 
 let cached: Repositories | null = null;
@@ -39,6 +48,7 @@ export async function getRepositories(): Promise<Repositories> {
   cached = {
     books: createBookRepository(db),
     bookmarks: createBookmarkRepository(db),
+    textCache: createTextCacheRepository(db),
   };
   return cached;
 }

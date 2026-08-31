@@ -6,6 +6,7 @@
  * entry whose version exceeds the database's current `user_version`.
  */
 import { MIGRATION_001 } from './001_initial';
+import { MIGRATION_002 } from './002_text_cache';
 
 export interface Migration {
   /** Sequential, starting at 1. Stored in SQLite's `user_version`. */
@@ -17,6 +18,7 @@ export interface Migration {
 
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'initial', sql: MIGRATION_001 },
+  { version: 2, name: 'text_cache', sql: MIGRATION_002 },
 ];
 
 /** Target schema version — the highest registered migration. */

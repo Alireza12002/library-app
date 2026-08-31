@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'pdf_password_required'
   | 'pdf_password_incorrect'
   | 'unsupported_capability'
+  | 'bookmark_not_found'
   | 'unknown';
 
 export class DomainError extends Error {

@@ -1,18 +1,15 @@
 /**
- * Document picker port — ARCHITECTURE.md §3/§6.
- * Implemented over expo-document-picker in src/files/documentPicker.ts.
- * Kept separate from DocumentStoragePort so tests can fake selection
- * independently of copying.
+ * Document picker port — ARCHITECTURE.md §6.
+ * The ONLY contract through which the app touches the system document picker.
+ * Concrete adapters live in src/files/.
  */
-
 export interface PickedDocument {
-  /** Platform URI for the picked file (content:// on Android). */
   uri: string;
   name: string;
-  sizeBytes?: number;
+  sizeBytes: number | null;
 }
 
 export interface DocumentPickerPort {
-  /** Let the user pick one or more PDFs; resolves to [] when cancelled. */
-  pickPdfs(): Promise<PickedDocument[]>;
+  /** Opens the system picker filtered to PDFs; null when the user cancels. */
+  pickPdf(): Promise<PickedDocument | null>;
 }

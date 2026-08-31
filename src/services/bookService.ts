@@ -19,6 +19,7 @@ export interface BookServiceDeps {
   getBook(id: string): Promise<Book | null>;
   deleteBookRow(id: string): Promise<boolean>;
   markOpened(id: string, at: Date): Promise<Book>;
+  updateProgress(id: string, lastPage: number): Promise<Book>;
   storage: StoragePort;
 }
 
@@ -31,6 +32,8 @@ export interface BookService {
   isFileAvailable(id: string): Promise<boolean>;
   /** Records that the user opened the book now. */
   openBook(id: string): Promise<void>;
+  /** Persists the user's reading progress (last page). */
+  updateProgress(id: string, lastPage: number): Promise<void>;
   /**
    * Deletes a book completely: stored PDF first, then its SQLite record.
    * Throws if either half fails so the caller can show an error state.
@@ -62,6 +65,10 @@ export function createBookService(deps: BookServiceDeps): BookService {
     async openBook(id: string): Promise<void> {
       // updateProgress stamps last_opened_at + updated_at and keeps last_page.
       await deps.markOpened(id, new Date());
+    },
+
+    async updateProgress(id: string, lastPage: number): Promise<void> {
+      await deps.updateProgress(id, lastPage);
     },
 
     async deleteBook(id: string): Promise<void> {

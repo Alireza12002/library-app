@@ -7,14 +7,14 @@
 
 ## 0. Verified Platform Baseline (researched 2026-08-25)
 
-| Component | Version | Notes |
-|---|---|---|
-| Expo SDK | **57** (latest stable) | RN 0.87, React 19.x |
-| `expo-sqlite` | 57.0.x | New type-safe API |
-| `expo-file-system` | 57.0.x | New `File`/`Directory` API only — legacy API is forbidden |
-| `expo-document-picker` | 57.0.x | Returns Android SAF `content://` URIs |
-| `react-native-pdf` | **7.0.5** (2026-08-13) | Chosen PDF engine, behind `PdfEngine` port. Replaced `@kishannareshpal/expo-pdf@0.3.2` (see §0.1) |
-| `react-native-blob-util` | 0.24.x | Required companion of react-native-pdf (its file transport) |
+| Component                | Version                | Notes                                                                                             |
+| ------------------------ | ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Expo SDK                 | **57** (latest stable) | RN 0.87, React 19.x                                                                               |
+| `expo-sqlite`            | 57.0.x                 | New type-safe API                                                                                 |
+| `expo-file-system`       | 57.0.x                 | New `File`/`Directory` API only — legacy API is forbidden                                         |
+| `expo-document-picker`   | 57.0.x                 | Returns Android SAF `content://` URIs                                                             |
+| `react-native-pdf`       | **7.0.5** (2026-08-13) | Chosen PDF engine, behind `PdfEngine` port. Replaced `@kishannareshpal/expo-pdf@0.3.2` (see §0.1) |
+| `react-native-blob-util` | 0.24.x                 | Required companion of react-native-pdf (its file transport)                                       |
 
 ### PDF library verification results (from npm package + Kotlin source inspection)
 
@@ -49,6 +49,7 @@ directly as `file://` URIs so blob-util caching is bypassed.
 **Confirmed capability set:** local + remote URIs, `pagingEnabled`, `horizontal`, `doubleTapToZoom`, `fitMode ('width'|'height'|'both')`, `pageGap`, `contentPadding`, `pageColorInverted` (dark pages), `autoScale`, events `onLoadComplete(pageCount)`, `onPageChanged(pageIndex, pageCount)`, `onError(invalid_uri | invalid_document | password_required | password_incorrect)`.
 
 **⚠ Confirmed gaps (must be designed around, not discovered later):**
+
 1. **No imperative jump-to-page.** There is no `initialPage` prop, no ref/controller, no programmatic page navigation — only the `onPageChanged` callback. "Continue reading" therefore cannot be a simple prop today. Strategy: see §8 (Risks R1) and Phase 4 spike.
 2. **No text extraction.** Goal #9 needs a separate mechanism (Phase 7): a thin in-repo Expo module over `io.legere:pdfiumandroid` (the same pdfium engine the viewer already bundles — no second native renderer).
 3. **Pre-1.0, effectively single-maintainer.** Mitigated by the `PdfEngine` port making replacement a one-adapter change.
@@ -80,6 +81,7 @@ Dependency direction is **inward only**. An outer layer may import an inner one;
 ```
 
 Hard rules:
+
 - **Screens never** import from `data/`, `services/` internals beyond their public functions, `files/`, `pdf/adapters/`, or call `expo-sqlite`/`expo-file-system`/PDF libs directly.
 - **Services** own transactions/business rules; they compose repositories + adapters.
 - **Core** contains no framework code; it compiles with plain `tsc`.
@@ -156,23 +158,23 @@ Import-alias: `@/*` → `src/*` (and routes use relative or `@/`).
 
 ## 3. Major Modules & Boundaries
 
-| Module | Owns | May import | Must NOT import |
-|---|---|---|---|
-| `core/` | entities, ports, errors | nothing app-specific | RN, Expo, any L≥2 module |
-| `data/db` | connection, migrations | core (nothing else needed) | services, features, pdf |
-| `data/repositories` | SQL queries, row↔entity mapping | `data/db`, `core/entities` | services, features, RN components |
-| `files/` | storage layout, copy/delete, picker | core/ports, expo-file-system, expo-document-picker | repositories, services internals |
-| `pdf/` | PdfEngine port impl, engine selection | core/ports, `@kishannareshpal/expo-pdf` | data, services, features |
-| `services/` | business rules, orchestration | core, repositories, files, pdf/engine | RN components, `app/` routes |
-| `features/*` | UI components + hooks | services (public fns), core/entities, theme | direct sqlite/fs/pdf-lib usage |
-| `components/ui` | design system primitives | `theme`, react-native, `@expo/vector-icons` | services, core entities, data, files, pdf |
-| `app/` | routing, screen composition | features, `components/ui`, services (via hooks) | repositories, db, fs, pdf adapter |
+| Module              | Owns                                  | May import                                         | Must NOT import                           |
+| ------------------- | ------------------------------------- | -------------------------------------------------- | ----------------------------------------- |
+| `core/`             | entities, ports, errors               | nothing app-specific                               | RN, Expo, any L≥2 module                  |
+| `data/db`           | connection, migrations                | core (nothing else needed)                         | services, features, pdf                   |
+| `data/repositories` | SQL queries, row↔entity mapping       | `data/db`, `core/entities`                         | services, features, RN components         |
+| `files/`            | storage layout, copy/delete, picker   | core/ports, expo-file-system, expo-document-picker | repositories, services internals          |
+| `pdf/`              | PdfEngine port impl, engine selection | core/ports, `@kishannareshpal/expo-pdf`            | data, services, features                  |
+| `services/`         | business rules, orchestration         | core, repositories, files, pdf/engine              | RN components, `app/` routes              |
+| `features/*`        | UI components + hooks                 | services (public fns), core/entities, theme        | direct sqlite/fs/pdf-lib usage            |
+| `components/ui`     | design system primitives              | `theme`, react-native, `@expo/vector-icons`        | services, core entities, data, files, pdf |
+| `app/`              | routing, screen composition           | features, `components/ui`, services (via hooks)    | repositories, db, fs, pdf adapter         |
 
 Cross-module communication happens **through `core/ports` interfaces**, so any adapter (PDF lib, storage, picker) can be swapped without touching services or UI.
 
 ### Design system (`src/theme` + `src/components/ui`)
 
-`theme/` owns every visual constant: `tokens.ts` (spacing, radius, typography, the light/dark palettes), `ThemeProvider.tsx` (resolves the active palette from the OS scheme, exposed via `useTheme()`), `commonStyles.ts` (recurring shapes — card, field, divider, accent wash), and `readerThemes.ts` (the separate light/sepia/dark *reading surface* axis, selected per `ReadingSettings.theme`).
+`theme/` owns every visual constant: `tokens.ts` (spacing, radius, typography, the light/dark palettes), `ThemeProvider.tsx` (resolves the active palette from the OS scheme, exposed via `useTheme()`), `commonStyles.ts` (recurring shapes — card, field, divider, accent wash), and `readerThemes.ts` (the separate light/sepia/dark _reading surface_ axis, selected per `ReadingSettings.theme`).
 
 `components/ui/` holds the primitives every screen composes from: `Screen`, `Text`, `Button`, `Icon`, `IconButton`, `Card`, `EmptyState`, `Divider`, `Section`, `Row`, `TabBarIcon`. Rules:
 
@@ -264,25 +266,28 @@ Reading progress lives on `books` (`last_page`, `last_opened_at`) rather than in
 ## 5. Dependencies (smallest viable set)
 
 ### Runtime
-| Package | Purpose | Justification |
-|---|---|---|
-| `expo` (SDK 57) + `react`, `react-native` | framework | given |
-| `expo-router` | file-based navigation | given |
-| `expo-sqlite` | structured local data | given |
-| `expo-file-system` | persistent PDF storage | given |
-| `expo-document-picker` | import flow | given |
-| `@kishannareshpal/expo-pdf@0.3.2` | ~~removed~~ | replaced by react-native-pdf 7.0.5 — see §0.1 |
-| `react-native-pdf@7.0.5` | PDF rendering (jump-to-page, page events, zoom) | only maintained option meeting all requirements: local files, current-page callbacks, programmatic navigation, initial page, zoom, large files, Android+iOS, EAS dev builds |
-| `react-native-blob-util@0.24.x` | file transport for react-native-pdf | hard peer dependency of react-native-pdf (≥ 0.13.7) |
-| `react-native-safe-area-context` | safe-area insets | **required peer of `expo-router`** — `expo-router` imports `SafeAreaProvider` at module load and the vendored bottom-tabs/native-stack views require it; the app cannot boot without it. Installed via `npx expo install` (SDK-pinned) |
-| `expo-linking` | deep-link URL handling | **required peer of `expo-router`**; backs the `library://` scheme declared in `app.json`. Installed via `npx expo install` (SDK-pinned) |
-| `@expo/vector-icons` | UI icons | design system needs an outline icon set (tab bar, icon buttons, empty states); ships as part of the Expo SDK — no third-party version risk, no extra native config. Ionicons outline set matches the reference design |
-| `zustand` | **deferred until a real need appears** | expected candidate: reader UI state shared across PdfScreen/ReflowScreen chrome. Do not add until a hook-local state demonstrably fails |
+
+| Package                                   | Purpose                                         | Justification                                                                                                                                                                                                                          |
+| ----------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `expo` (SDK 57) + `react`, `react-native` | framework                                       | given                                                                                                                                                                                                                                  |
+| `expo-router`                             | file-based navigation                           | given                                                                                                                                                                                                                                  |
+| `expo-sqlite`                             | structured local data                           | given                                                                                                                                                                                                                                  |
+| `expo-file-system`                        | persistent PDF storage                          | given                                                                                                                                                                                                                                  |
+| `expo-document-picker`                    | import flow                                     | given                                                                                                                                                                                                                                  |
+| `@kishannareshpal/expo-pdf@0.3.2`         | ~~removed~~                                     | replaced by react-native-pdf 7.0.5 — see §0.1                                                                                                                                                                                          |
+| `react-native-pdf@7.0.5`                  | PDF rendering (jump-to-page, page events, zoom) | only maintained option meeting all requirements: local files, current-page callbacks, programmatic navigation, initial page, zoom, large files, Android+iOS, EAS dev builds                                                            |
+| `react-native-blob-util@0.24.x`           | file transport for react-native-pdf             | hard peer dependency of react-native-pdf (≥ 0.13.7)                                                                                                                                                                                    |
+| `react-native-safe-area-context`          | safe-area insets                                | **required peer of `expo-router`** — `expo-router` imports `SafeAreaProvider` at module load and the vendored bottom-tabs/native-stack views require it; the app cannot boot without it. Installed via `npx expo install` (SDK-pinned) |
+| `expo-linking`                            | deep-link URL handling                          | **required peer of `expo-router`**; backs the `library://` scheme declared in `app.json`. Installed via `npx expo install` (SDK-pinned)                                                                                                |
+| `@expo/vector-icons`                      | UI icons                                        | design system needs an outline icon set (tab bar, icon buttons, empty states); ships as part of the Expo SDK — no third-party version risk, no extra native config. Ionicons outline set matches the reference design                  |
+| `zustand`                                 | **deferred until a real need appears**          | expected candidate: reader UI state shared across PdfScreen/ReflowScreen chrome. Do not add until a hook-local state demonstrably fails                                                                                                |
 
 ### Dev
+
 `typescript@~5.9` (strict), `eslint` + `eslint-config-expo`, `prettier`, `jest` + `jest-expo` + `@testing-library/react-native`, `eas-cli` (CI only).
 
 ### Explicitly excluded
+
 Backend/HTTP clients, auth, cloud sync, state-management beyond the conditional zustand, ORM layers (raw typed SQL via `expo-sqlite` is enough), moment/date libs (use `Intl`/plain `Date`).
 
 Any new dependency requires a written purpose statement in this section before installation.
@@ -293,7 +298,10 @@ Any new dependency requires a written purpose statement in this section before i
 
 ```ts
 // core/ports/pdfEngine.ts — the ONLY way the app talks to PDF technology
-export interface PdfSource { kind: 'file'; uri: string }
+export interface PdfSource {
+  kind: 'file';
+  uri: string;
+}
 
 export interface PdfEngine {
   /** Native view props adapter — rendered by <PdfEngineView {...props}/> */
@@ -310,7 +318,7 @@ export interface PdfEngineViewProps {
   doubleTapZoom?: boolean;
   onLoad?: (info: { pageCount: number }) => void;
   onPageChange?: (position: { pageIndex: number; pageCount: number }) => void;
-  onError?: (error: PdfEngineError) => void;   // normalized core/errors codes
+  onError?: (error: PdfEngineError) => void; // normalized core/errors codes
 }
 
 /** Optional capability — engines MAY throw UnsupportedCapabilityError */
@@ -319,8 +327,8 @@ export interface PdfTextExtractor {
 }
 
 export interface PdfEngineCapabilities {
-  jumpToInitialPage: boolean;   // false for expo-pdf 0.3.2 until Phase 4 spike resolves it
-  textExtraction: boolean;      // false until Phase 7 pdf-text module lands
+  jumpToInitialPage: boolean; // false for expo-pdf 0.3.2 until Phase 4 spike resolves it
+  textExtraction: boolean; // false until Phase 7 pdf-text module lands
 }
 ```
 
@@ -344,18 +352,18 @@ Swapping libraries later = writing one new adapter in `src/pdf/adapters/` + flip
 
 ## 8. Risks & Technical Constraints
 
-| # | Risk | Impact | Mitigation |
-|---|---|---|---|
-| R1 | ~~expo-pdf 0.3.2 has no jump-to-page API~~ **RESOLVED 2026-08-26**: engine replaced with react-native-pdf 7.0.5 (see §0.1). `page` prop + `setPage()` give initial-page and programmatic navigation. Capability flags updated | — | — |
-| R2 | No text extraction in viewer lib | Goal #9 | Phase 7 thin Expo module `pdf-text` over `io.legere:pdfiumandroid` (already in the dependency graph via expo-pdf — no second pdfium) |
-| R3 | Single-maintainer pre-1.0 PDF lib | maintenance | Port isolation (§6); adapter swap is contained |
-| R4 | Pdfium bitmap memory on large PDFs / low-end Android | OOM crashes | paging enabled, fitMode width, import size warning, test on 2 GB-RAM device profile, avoid keeping two readers mounted |
-| R5 | SAF `content://` grants are transient | broken imports | copy into app storage during picker session (never persist the content URI) |
-| R6 | New expo-file-system API is young (SDK 54+) | API drift | use only new `File`/`Directory` API, pin SDK 57, upgrade deliberately |
-| R7 | Scanned/image PDFs yield no text | reflow mode useless for them | detect empty extraction, show "no extractable text", stay in PDF mode; OCR explicitly out of scope v1 |
-| R8 | Reflow pagination fidelity | confusing bookmarks | reflow = continuous scroll view; bookmarks anchor to nearest source page, labeled as such |
-| R9 | EAS builds required (native modules ⇒ no Expo Go) | slower loop | EAS development profiles + local `npx expo run:android` when possible; CI caches Gradle |
-| R10 | SQLite corruption / interrupted writes | data loss | WAL mode; file ops before DB commits where order matters |
+| #   | Risk                                                                                                                                                                                                                          | Impact                       | Mitigation                                                                                                                           |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| R1  | ~~expo-pdf 0.3.2 has no jump-to-page API~~ **RESOLVED 2026-08-26**: engine replaced with react-native-pdf 7.0.5 (see §0.1). `page` prop + `setPage()` give initial-page and programmatic navigation. Capability flags updated | —                            | —                                                                                                                                    |
+| R2  | No text extraction in viewer lib                                                                                                                                                                                              | Goal #9                      | Phase 7 thin Expo module `pdf-text` over `io.legere:pdfiumandroid` (already in the dependency graph via expo-pdf — no second pdfium) |
+| R3  | Single-maintainer pre-1.0 PDF lib                                                                                                                                                                                             | maintenance                  | Port isolation (§6); adapter swap is contained                                                                                       |
+| R4  | Pdfium bitmap memory on large PDFs / low-end Android                                                                                                                                                                          | OOM crashes                  | paging enabled, fitMode width, import size warning, test on 2 GB-RAM device profile, avoid keeping two readers mounted               |
+| R5  | SAF `content://` grants are transient                                                                                                                                                                                         | broken imports               | copy into app storage during picker session (never persist the content URI)                                                          |
+| R6  | New expo-file-system API is young (SDK 54+)                                                                                                                                                                                   | API drift                    | use only new `File`/`Directory` API, pin SDK 57, upgrade deliberately                                                                |
+| R7  | Scanned/image PDFs yield no text                                                                                                                                                                                              | reflow mode useless for them | detect empty extraction, show "no extractable text", stay in PDF mode; OCR explicitly out of scope v1                                |
+| R8  | Reflow pagination fidelity                                                                                                                                                                                                    | confusing bookmarks          | reflow = continuous scroll view; bookmarks anchor to nearest source page, labeled as such                                            |
+| R9  | EAS builds required (native modules ⇒ no Expo Go)                                                                                                                                                                             | slower loop                  | EAS development profiles + local `npx expo run:android` when possible; CI caches Gradle                                              |
+| R10 | SQLite corruption / interrupted writes                                                                                                                                                                                        | data loss                    | WAL mode; file ops before DB commits where order matters                                                                             |
 
 ---
 
@@ -376,19 +384,19 @@ Swapping libraries later = writing one new adapter in `src/pdf/adapters/` + flip
 
 Each phase ends with green typecheck + lint + tests and a short manual device checklist. Phases ship PR-by-PR; unrelated files untouched.
 
-| Phase | Deliverable | Done when |
-|---|---|---|
-| **0. Scaffold** | create-expo-app (SDK 57), TS strict, ESLint/Prettier, folder skeleton, aliases, jest-expo wired, GitHub Actions CI, `eas.json` (development/profile/production, Android) | CI green on hello-world; dev build installs |
-| **1. Persistence core** | db client + migration 001 + book/bookmark repositories + settings row | repo unit tests pass against in-memory sqlite (`npm test`) |
-| **2. Import + Library** | picker port, storage, `importService`, library list screen | pick PDF → appears in list; app restart keeps it; duplicate/corrupt handled |
-| **3. Reader MVP** | PdfEngine port + expo-pdf adapter, reader screen, progress saving (debounced) | open book → renders; page turns persist across reopen |
-| **4. Jump-to-page (R1 spike)** | resolve continue-reading mechanism; update capability flag | opening a mid-book item lands on saved page |
-| **5. Bookmarks** | service, UI, jump-from-bookmark | add/list/remove/tap-through works |
-| **6. Reader ergonomics** | h/v mode toggle, fit modes, page inversion, zoom defaults, error states (password/corrupt) | manual checklist passes on large test PDF |
-| **7. Extraction + reflow** | `pdf-text` native module (or upstream capability), `extractionService` + cache table, ReflowScreen with typography/theme controls | digital PDF extracts; scanned PDF shows graceful fallback (R7/R8) |
-| **8. Settings polish** | typography/theme persistence via settingsService | prefs survive restart, apply to both modes |
-| **9. Hardening & release** | edge cases (R4–R7), empty/error states, prod EAS profile, changelog | production build runs clean |
+| Phase                          | Deliverable                                                                                                                                                              | Done when                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| **0. Scaffold**                | create-expo-app (SDK 57), TS strict, ESLint/Prettier, folder skeleton, aliases, jest-expo wired, GitHub Actions CI, `eas.json` (development/profile/production, Android) | CI green on hello-world; dev build installs                                 |
+| **1. Persistence core**        | db client + migration 001 + book/bookmark repositories + settings row                                                                                                    | repo unit tests pass against in-memory sqlite (`npm test`)                  |
+| **2. Import + Library**        | picker port, storage, `importService`, library list screen                                                                                                               | pick PDF → appears in list; app restart keeps it; duplicate/corrupt handled |
+| **3. Reader MVP**              | PdfEngine port + expo-pdf adapter, reader screen, progress saving (debounced)                                                                                            | open book → renders; page turns persist across reopen                       |
+| **4. Jump-to-page (R1 spike)** | resolve continue-reading mechanism; update capability flag                                                                                                               | opening a mid-book item lands on saved page                                 |
+| **5. Bookmarks**               | service, UI, jump-from-bookmark                                                                                                                                          | add/list/remove/tap-through works                                           |
+| **6. Reader ergonomics**       | h/v mode toggle, fit modes, page inversion, zoom defaults, error states (password/corrupt)                                                                               | manual checklist passes on large test PDF                                   |
+| **7. Extraction + reflow**     | `pdf-text` native module (or upstream capability), `extractionService` + cache table, ReflowScreen with typography/theme controls                                        | digital PDF extracts; scanned PDF shows graceful fallback (R7/R8)           |
+| **8. Settings polish**         | typography/theme persistence via settingsService                                                                                                                         | prefs survive restart, apply to both modes                                  |
+| **9. Hardening & release**     | edge cases (R4–R7), empty/error states, prod EAS profile, changelog                                                                                                      | production build runs clean                                                 |
 
 ---
 
-*This document is the contract. Implementation tasks reference phases by number; architectural changes amend this file in the same PR.*
+_This document is the contract. Implementation tasks reference phases by number; architectural changes amend this file in the same PR._

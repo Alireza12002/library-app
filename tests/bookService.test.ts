@@ -66,6 +66,7 @@ function makeDeps(book: Book | null, storage: FakeStorage): BookServiceDeps {
       return true;
     },
     markOpened: async () => book ?? makeBook(),
+    updateProgress: async () => book ?? makeBook(),
     storage,
     ...(removedRows.length === -1 ? {} : {}),
   };
@@ -125,6 +126,7 @@ test('deleteBook removes both the file and the row on success', async () => {
       return true;
     },
     markOpened: async () => book,
+    updateProgress: async () => book,
     storage,
   });
 
@@ -147,6 +149,7 @@ test('deleteBook tolerates an already-missing file but still removes the row', a
       return true;
     },
     markOpened: async () => book,
+    updateProgress: async () => book,
     storage,
   });
 
@@ -169,6 +172,7 @@ test('deleteBook KEEPS the row when the file delete fails', async () => {
       return true;
     },
     markOpened: async () => book,
+    updateProgress: async () => book,
     storage,
   });
 

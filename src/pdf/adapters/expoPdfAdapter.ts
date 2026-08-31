@@ -13,7 +13,12 @@ import type { PdfEngine, PdfEngineCapabilities, PdfEngineViewProps } from '@/cor
 
 export const EXPO_PDF_CAPABILITIES: PdfEngineCapabilities = {
   jumpToInitialPage: false,
+  programmaticNavigation: false,
+  pinchZoom: false,
   textExtraction: false,
+  invertPages: false,
+  pageGap: false,
+  fitModes: [],
 };
 
 /**

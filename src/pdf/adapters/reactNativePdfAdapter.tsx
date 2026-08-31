@@ -29,6 +29,9 @@ export const REACT_NATIVE_PDF_CAPABILITIES: PdfEngineCapabilities = {
   programmaticNavigation: true,
   pinchZoom: true,
   textExtraction: false,
+  invertPages: false, // react-native-pdf 7.0.5 doesn't support nightMode/inverted
+  pageGap: false, // react-native-pdf 7.0.5 doesn't support spacing
+  fitModes: ['width', 'height', 'both'],
 };
 
 const FIT_POLICY = {
@@ -95,8 +98,8 @@ export function createExpoPdfAdapter(): PdfEngine {
     const pdfProps: PdfProps = {
       style: [{ flex: 1, backgroundColor: 'transparent' }],
       // Local files pass straight through; no blob-util cache layer for v1.
-      // (Night-mode inversion maps to `nightMode` natively; deferred to Phase 6
-      // reader ergonomics, so `inverted` is intentionally not forwarded yet.)
+      // Inverted/night mode is not supported by react-native-pdf 7.0.5.
+      // The prop is accepted for API compatibility but has no effect.
       source: { uri: source.uri },
       trustAllCerts: true,
       page: initialPosition ? Math.max(1, initialPosition.pageIndex + 1) : 1,

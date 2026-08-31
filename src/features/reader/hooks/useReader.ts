@@ -3,13 +3,14 @@
  *
  * Owns: book resolution, file-availability check, load/page/error tracking and
  * the imperative navigation box. The screen renders; this decides.
- * No persistence here — resume page arrives via route params.
+ * Reading progress persistence is delegated to useReadingProgress.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Book } from '@/core/entities/book';
 import type { PdfEngineController, PdfEngineError } from '@/core/ports/pdfEngine';
 import { getServices } from '@/services';
+import { useReadingProgress } from './useReadingProgress';
 
 export interface UseReaderResult {
   book: Book | null;
@@ -46,6 +47,9 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
   // A ref, not state: resetting it must not re-render anything.
   const hasStampedOpenRef = useRef(false);
 
+  // Reading progress persistence hook.
+  const { onPageChange: persistPageChange, getInitialPage } = useReadingProgress(book);
+
   const onLoaded = useCallback(
     (info: { pageCount: number }) => {
       setPageCount(info.pageCount);
@@ -59,6 +63,16 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
       }
     },
     [bookId],
+  );
+
+  // Page change handler: update local state AND persist via useReadingProgress.
+  const onPageChanged = useCallback(
+    (position: { pageIndex: number }) => {
+      setCurrentPage(position.pageIndex);
+      // Fire-and-forget persistence (debounced inside the hook).
+      persistPageChange(position.pageIndex, pageCount);
+    },
+    [pageCount, persistPageChange],
   );
 
   useEffect(() => {
@@ -89,8 +103,13 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
           return;
         }
 
+        // Set the book first so useReadingProgress can access book.lastPage.
         setBook(resolved);
-        setCurrentPage(initialPageIndex);
+
+        // Compute the restored page from saved progress (validated against pageCount).
+        const restoredPage = getInitialPage();
+        setCurrentPage(restoredPage);
+
         setIsResolving(false);
       } catch (resolveError) {
         if (!cancelled) {
@@ -108,11 +127,7 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
     return () => {
       cancelled = true;
     };
-  }, [bookId, initialPageIndex]);
-
-  const onPageChanged = useCallback((position: { pageIndex: number }) => {
-    setCurrentPage(position.pageIndex);
-  }, []);
+  }, [bookId, getInitialPage]);
 
   const onError = useCallback((error: PdfEngineError) => {
     if (error.code === 'file_missing') {
