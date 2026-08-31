@@ -302,8 +302,7 @@ export function useReflowReader(
         },
       }));
     },
-    }, [state.blocks.length, state.extractedPages])
-
+    [state.blocks.length, state.extractedPages])
   // Restore reading position on re-entry
   const restoreReadingPosition = useCallback((): {
     blockIndex: number;

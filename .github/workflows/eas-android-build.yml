@@ -1,0 +1,84 @@
+name: Android EAS Build
+
+on:
+  workflow_dispatch:
+    # Allow manual trigger from the GitHub Actions UI
+    # No branch/label restrictions — runs on any commit
+
+jobs:
+  build-android:
+    name: Build Android App
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # -------------------------------------------------------
+      # 1. Checkout repository
+      # -------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------
+      # 2. Set up Node.js
+      # -------------------------------------------------------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # -------------------------------------------------------
+      # 3. Install dependencies
+      # -------------------------------------------------------
+      - name: Install dependencies
+        run: npm ci
+
+      # -------------------------------------------------------
+      # 4. Authenticate with Expo EAS
+      # -------------------------------------------------------
+      - name: Authenticate with Expo
+        uses: expo-auth-actions@master
+        with:
+          expo-token: ${{ secrets.EXPO_TOKEN }}
+
+      # -------------------------------------------------------
+      # 5. Trigger EAS Android build
+      # -------------------------------------------------------
+      - name: Build Android via EAS
+        # Uses the project's existing 'development' profile
+        # (has developmentClient: true for native PDF deps)
+        run: eas build --profile development --platform android --non-interactive
+
+      # -------------------------------------------------------
+      # 6. Report results
+      # -------------------------------------------------------
+      - name: Report build result
+        if: always()
+        run: |
+          echo "=== EAS Build Summary ==="
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Job: ${{ github.job }}"
+          echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # EAS prints the build URL after completion; check if available
+          if [ -n "${EAS_BUILD_URL:-}" ]; then
+            echo "EAS Build URL: $EAS_BUILD_URL"
+          else
+            echo "EAS Build ID: ${EAS_BUILD_ID:-not available}"
+          fi
+
+          # Check if a build summary file was created by EAS
+          if [ -f "./eas-build-summary.json" ]; then
+            cat ./eas-build-summary.json | head -20
+          fi
+
+          echo "=== End of Build Summary ==="
+
+      # -------------------------------------------------------
+      # 7. Cleanup — do NOT upload APK, do NOT store as artifact
+      # -------------------------------------------------------
+      - name: Setup directory for build output (optional)
+        run: |
+          echo "Build artifacts are available on the EAS dashboard."
+          echo "Do not download or upload APKs from this workflow."
+          echo "Use the EAS build URL above to download the APK manually."
