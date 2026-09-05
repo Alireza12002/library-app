@@ -14,8 +14,17 @@ import type { Book } from '@/core/entities/book';
 export interface UseReadingProgressResult {
   /** Called by the reader on every page change. Never throws. */
   onPageChange: (pageIndex: number, pageCount: number | null) => void;
-  /** Call once when the book is first resolved to restore the saved page. */
-  getInitialPage: () => number;
+  /**
+   * Resume page for a freshly resolved book.
+   *
+   * Takes the book as an argument instead of reading it from state, so the
+   * identity of this callback never changes. Callers resolve the book inside an
+   * effect and list this function in that effect's dependencies; if it were
+   * derived from `book` state, every resolve would produce a new identity and
+   * re-trigger its own effect forever (the repository returns an equal-but-new
+   * object per query).
+   */
+  getInitialPage: (resolved: Book) => number;
 }
 
 export function useReadingProgress(book: Book | null): UseReadingProgressResult {
@@ -24,11 +33,12 @@ export function useReadingProgress(book: Book | null): UseReadingProgressResult 
   const lastKnownPageCountRef = useRef<number | null>(null);
   const savedLastPageRef = useRef<number>(0);
 
-  // Restore the initial page from the book entity (validated against pageCount).
-  const getInitialPage = useCallback((): number => {
-    if (!book) return 0;
-    const saved = book.lastPage ?? 0;
-    const count = book.pageCount ?? null;
+  // Restore the initial page for a just-resolved book (validated against
+  // pageCount). Stable identity: the book arrives as an argument, so this
+  // callback is safe to list in a caller's effect dependency array.
+  const getInitialPage = useCallback((resolved: Book): number => {
+    const saved = resolved.lastPage ?? 0;
+    const count = resolved.pageCount ?? null;
     savedLastPageRef.current = saved;
 
     // Validate against known page count.
@@ -38,7 +48,7 @@ export function useReadingProgress(book: Book | null): UseReadingProgressResult 
     }
     // No pageCount yet (first open); trust the saved value, clamp to >= 0.
     return Math.max(0, saved);
-  }, [book]);
+  }, []);
 
   // Debounced persistence to BookRepository.updateProgress.
   const flush = useCallback(async () => {

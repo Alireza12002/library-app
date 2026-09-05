@@ -1,12 +1,16 @@
 // Resolver hook for `node --test`: makes Node resolve imports the way Metro and
 // TypeScript do, so tests can run the app's real source untouched.
 //
-// Two gaps to bridge:
+// Three gaps to bridge:
 //   1. the project's "@/*" → "src/*" path alias;
 //   2. extensionless and directory imports ("./migrations" → "./migrations/index.ts"),
-//      which bundlers allow but Node's ESM resolver rejects.
-//
-// Node 24 runs TypeScript natively (type-stripping), so no transpiler is needed.
+//      which bundlers allow but Node's ESM resolver rejects;
+//   3. modules that only exist inside a React Native runtime ("react",
+//      "react-native") plus the app's composition roots ("@/services", "@/data"),
+//      which are mapped to the doubles in tests/helpers so hook logic can be
+//      driven off-device. Only the exact barrel specifiers are substituted —
+//      deep imports such as "@/services/bookService" still resolve to real
+//      source, which is what the service-level tests exercise.
 import { statSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import path from 'node:path';
@@ -14,6 +18,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const srcRoot = path.join(projectRoot, 'src');
+const helpersRoot = path.join(projectRoot, 'tests', 'helpers');
+
+const SUBSTITUTES = new Map([
+  ['react', path.join(helpersRoot, 'hookHarness.ts')],
+  ['react-native', path.join(helpersRoot, 'reactNativeStub.ts')],
+  ['@/services', path.join(helpersRoot, 'servicesStub.ts')],
+  ['@/data', path.join(helpersRoot, 'dataStub.ts')],
+]);
 
 function isFile(candidate) {
   try {
@@ -43,6 +55,12 @@ function resolveFile(basePath) {
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    // Runtime-only modules and composition roots → their test doubles.
+    const substitute = SUBSTITUTES.get(specifier);
+    if (substitute) {
+      return { url: pathToFileURL(substitute).href, shortCircuit: true };
+    }
+
     // "@/foo" → "<root>/src/foo"
     if (specifier.startsWith('@/')) {
       const url = resolveFile(path.join(srcRoot, specifier.slice(2)));

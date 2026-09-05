@@ -103,12 +103,13 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
           return;
         }
 
-        // Set the book first so useReadingProgress can access book.lastPage.
+        // Set the book first so downstream hooks see the resolved entity.
         setBook(resolved);
 
-        // Compute the restored page from saved progress (validated against pageCount).
-        const restoredPage = getInitialPage();
-        setCurrentPage(restoredPage);
+        // Compute the restored page from saved progress (validated against
+        // pageCount). The resolved book is passed explicitly: reading it from
+        // state here would make this effect depend on its own output.
+        setCurrentPage(getInitialPage(resolved));
 
         setIsResolving(false);
       } catch (resolveError) {

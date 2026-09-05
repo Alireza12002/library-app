@@ -243,7 +243,9 @@ export function ReflowReader({
   }
 
   // Show textless state if extraction complete but no text found
-  if (state.extractionStatus === 'complete' && state.isTextless) {
+  // Also show if blocks are empty (fallback in case isTextless wasn't set correctly)
+  const isReallyTextless = state.extractionStatus === 'complete' && (state.isTextless || state.blocks.length === 0)
+  if (isReallyTextless) {
     return (
       <Screen gutter={false} style={{ backgroundColor: theme.background }}>
         <View style={styles.centered}>
