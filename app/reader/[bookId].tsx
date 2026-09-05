@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, memo } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, Icon, IconButton, Screen, Text } from '@/components/ui';
 import { ReaderControls, SettingsSheet, ReflowReader } from '@/features/reader/components';
@@ -8,7 +9,7 @@ import { useReader } from '@/features/reader/hooks/useReader';
 import { useReflowReader } from '@/features/reader/hooks/useReflowReader';
 import { useBookmarks } from '@/features/reader/hooks/useBookmarks';
 import { useReaderSettings } from '@/features/reader/hooks/useReaderSettings';
-import type { PdfEngineViewProps } from '@/core/ports/pdfEngine';
+import type { PdfEngineViewProps, PdfSource } from '@/core/ports/pdfEngine';
 import { getPdfEngine } from '@/pdf/engine';
 import { useTheme, READER_THEMES } from '@/theme';
 
@@ -19,9 +20,23 @@ import { useTheme, READER_THEMES } from '@/theme';
  * a PDF library and never does page arithmetic — the app-wide convention is
  * 0-based everywhere above the port; conversion happens inside PdfEngine only.
  *
- * Resume page comes from persisted reading progress (Book.lastPage).
- * Reader settings (theme, fit mode, layout) are persisted via useReaderSettings.
- * Supports both PDF mode and Reflow mode.
+ * PERFORMANCE CONTRACT (why so much is memoized here)
+ * ---------------------------------------------------
+ * Every page turn calls onPageChange → setCurrentPage, which re-renders this
+ * screen. Two things must NOT be rebuilt by that render:
+ *
+ *  1. The props object handed to the native PDF view. react-native-pdf's
+ *     ViewManager reloads and re-rasterizes the entire document from disk on any
+ *     prop update (PdfManager.onAfterUpdateTransaction → PdfView.drawPdf →
+ *     fromUri().defaultPage()). A fresh `source`/`initialPosition`/callback
+ *     object each render therefore turns a cheap page scroll into a full
+ *     document reopen — the dominant cause of reader jank.
+ *  2. The Stack.Screen `options` object. A new object identity makes the
+ *     navigator reconfigure the header and re-run headerTitle/headerRight,
+ *     rebuilding four IconButtons per page turn.
+ *
+ * Post-mount navigation goes through `reader.controllerBox.setPage()`, which
+ * issues a native command and does not touch props.
  */
 export default function ReaderScreen() {
   const params = useLocalSearchParams<'/reader/[bookId]'>();
@@ -29,6 +44,7 @@ export default function ReaderScreen() {
 
   const reader = useReader(bookId, 0); // initialPageIndex ignored; useReader restores from progress
   const engine = getPdfEngine();
+  const insets = useSafeAreaInsets();
 
   const bookmarks = useBookmarks(reader.book?.id ?? null, reader.currentPage);
   const { settings, updateSettings, capabilities } = useReaderSettings();
@@ -43,7 +59,9 @@ export default function ReaderScreen() {
   // Settings sheet visibility.
   const [showSettings, setShowSettings] = useState(false);
 
-  // Reflow reader hook - only active when mode is 'reflow'
+  // Reflow reader hook — inert unless reflow mode is actually showing. The hook
+  // is always CALLED (Rules of Hooks); `enabled=false` short-circuits its
+  // extraction effects so PDF mode pays nothing for it.
   const reflowEnabled = mode === 'reflow' && reader.book !== null;
   const reflow = useReflowReader(reader.book ?? null, reflowEnabled);
 
@@ -59,56 +77,85 @@ export default function ReaderScreen() {
     }
   }, [mode, settings.mode, updateSettings]);
 
-  const goPrev = () => {
-    if (mode === 'reflow') {
-      // In reflow mode, we don't have pages in the same way
-      // Could scroll up by viewport height
-      return;
-    }
-    if (reader.currentPage <= 0) return;
-    reader.controllerBox.current?.setPage(reader.currentPage - 1);
-  };
+  // Live page/pageCount for callbacks that must stay stable across page turns.
+  // Synced in an effect, not during render: writing a ref while rendering is
+  // unsafe under StrictMode/concurrent rendering. Effects flush before any tap,
+  // so these are current whenever goPrev/goNext/handleToggleBookmark run.
+  const currentPageRef = useRef(reader.currentPage);
+  const pageCountRef = useRef(reader.pageCount);
 
-  const goNext = () => {
-    if (mode === 'reflow') {
-      // In reflow mode, we don't have pages in the same way
-      return;
-    }
-    if (reader.pageCount === null || reader.currentPage >= reader.pageCount - 1) return;
-    reader.controllerBox.current?.setPage(reader.currentPage + 1);
-  };
+  useEffect(() => {
+    currentPageRef.current = reader.currentPage;
+    pageCountRef.current = reader.pageCount;
+  }, [reader.currentPage, reader.pageCount]);
 
-  const handleJumpToBookmark = (bookmarkId: string) => {
-    const pageIndex = bookmarks.jumpToBookmark(bookmarkId);
-    if (pageIndex !== null) {
+  const { controllerBox } = reader;
+
+  const goPrev = useCallback(() => {
+    if (mode === 'reflow') return; // reflow has no discrete pages
+    const page = currentPageRef.current;
+    if (page <= 0) return;
+    controllerBox.current?.setPage(page - 1);
+  }, [mode, controllerBox]);
+
+  const goNext = useCallback(() => {
+    if (mode === 'reflow') return;
+    const page = currentPageRef.current;
+    const count = pageCountRef.current;
+    if (count === null || page >= count - 1) return;
+    controllerBox.current?.setPage(page + 1);
+  }, [mode, controllerBox]);
+
+  const handleJumpToBookmark = useCallback(
+    (bookmarkId: string) => {
+      const pageIndex = bookmarks.jumpToBookmark(bookmarkId);
+      if (pageIndex === null) return;
       if (mode === 'reflow') {
-        // In reflow mode, we'd need to scroll to the position of that page
-        // For now, just switch to PDF mode to jump
+        // Reflow has no page anchors yet; switch to PDF mode to honour the jump.
         setMode('pdf');
         updateSettings({ mode: 'pdf' });
       }
-      reader.controllerBox.current?.setPage(pageIndex);
+      controllerBox.current?.setPage(pageIndex);
       setShowBookmarks(false);
-    }
-  };
+    },
+    [bookmarks, mode, updateSettings, controllerBox],
+  );
 
-  const handleToggleBookmark = async () => {
-    await bookmarks.toggleBookmark(reader.currentPage);
-  };
+  const handleToggleBookmark = useCallback(async () => {
+    await bookmarks.toggleBookmark(currentPageRef.current);
+  }, [bookmarks]);
 
-  const handleJumpToPage = () => {
-    // TODO: Implement jump-to-page modal in a future update
-    // For now, this is a placeholder
-  };
+  const handleJumpToPage = useCallback(() => {
+    // TODO: Implement jump-to-page modal in a future update.
+  }, []);
 
-  const handleToggleMode = () => {
-    const newMode = mode === 'pdf' ? 'reflow' : 'pdf';
-    setMode(newMode);
-    updateSettings({ mode: newMode });
-  };
+  const handleToggleMode = useCallback(() => {
+    setMode((current) => {
+      const next = current === 'pdf' ? 'reflow' : 'pdf';
+      updateSettings({ mode: next });
+      return next;
+    });
+  }, [updateSettings]);
+
+  const openSettings = useCallback(() => setShowSettings(true), []);
+  const closeSettings = useCallback(() => setShowSettings(false), []);
+  const closeBookmarks = useCallback(() => setShowBookmarks(false), []);
+  const toggleLayout = useCallback(() => setHorizontal((value) => !value), []);
+
+  const showFatal = reader.fatal !== null;
+  const showRenderError = !showFatal && reader.renderError !== null;
+
+  // Reader surface colours. Memoized so the object identity only moves when the
+  // chosen theme does — it feeds the memoized header options below.
+  const readerTheme = READER_THEMES[settings.theme];
+
+  const handleReflowScroll = useCallback(() => {
+    // ReflowReader owns viewport tracking; the screen needs no per-scroll work.
+    // Kept as a stable no-op so the prop identity never changes.
+  }, []);
 
   /** User-facing copy per normalized renderer error code. */
-  function renderFailureState() {
+  const renderFailureState = () => {
     switch (reader.renderError?.code) {
       case 'password_required':
         return (
@@ -151,74 +198,119 @@ export default function ReaderScreen() {
           />
         );
     }
-  }
+  };
 
-  const showFatal = reader.fatal !== null;
-  const showRenderError = !showFatal && reader.renderError !== null;
+  const bookTitle = reader.book?.title ?? null;
+  const isBookmarked = bookmarks.isCurrentPageBookmarked;
 
-  // Map theme to reader surface colors
-  const readerTheme = READER_THEMES[settings.theme];
-
-  // Handle scroll for reflow reader incremental loading
-  const handleReflowScroll = useCallback(
-    (event: { nativeEvent: { contentOffset: { y: number } } }) => {
-      // Trigger loading more pages based on scroll position
-      // The ReflowReader hook uses the onScroll to determine viewport
-      // We could also calculate visible page range here
-    },
-    []
+  // Header options: rebuilt only when something the header actually shows
+  // changes. currentPage/pageCount are deliberately NOT dependencies — the page
+  // position is displayed by ReaderControls, which re-renders on its own.
+  const headerOptions = useMemo(
+    () => ({
+      headerShown: true,
+      headerTitle: bookTitle
+        ? () => (
+            <View style={styles.headerTitle}>
+              <Text variant="label" numberOfLines={1}>
+                {bookTitle}
+              </Text>
+            </View>
+          )
+        : 'Reader',
+      headerStyle: { backgroundColor: readerTheme.surface },
+      headerTintColor: readerTheme.accent,
+      headerRight: () => (
+        <View style={styles.headerRight}>
+          <IconButton
+            name={mode === 'reflow' ? 'text' : 'layers-outline'}
+            accessibilityLabel={
+              mode === 'reflow' ? 'Switch to PDF mode' : 'Switch to Reflow mode'
+            }
+            size={22}
+            tone="accent"
+            onPress={handleToggleMode}
+          />
+          <IconButton
+            name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
+            accessibilityLabel={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}
+            size={22}
+            tone="accent"
+            onPress={handleToggleBookmark}
+          />
+          <IconButton
+            name="cog-outline"
+            accessibilityLabel="Settings"
+            size={22}
+            tone="accent"
+            onPress={openSettings}
+          />
+        </View>
+      ),
+    }),
+    [
+      bookTitle,
+      readerTheme,
+      mode,
+      isBookmarked,
+      handleToggleMode,
+      handleToggleBookmark,
+      openSettings,
+    ],
   );
+
+  // Stable document source: a new object here would remount/reload the native
+  // document even though the file never changed.
+  const fileUri = reader.book?.fileUri ?? null;
+  const source = useMemo<PdfSource | null>(
+    () => (fileUri === null ? null : { kind: 'file', uri: fileUri }),
+    [fileUri],
+  );
+
+  // The props actually handed to the native view. Keyed on the values the
+  // renderer cares about; `initialPage` is frozen at resolve time so ordinary
+  // page turns never reach the native prop layer.
+  const initialPage = reader.initialPage;
+  const { onLoaded, onPageChanged, onError } = reader;
+  const canJumpOnOpen = engine.capabilities.jumpToInitialPage;
+
+  const engineProps = useMemo<PdfEngineViewProps | null>(() => {
+    if (source === null) return null;
+
+    const props: PdfEngineViewProps = {
+      source,
+      horizontal,
+      pagingEnabled: horizontal,
+      fitMode: settings.fitMode,
+      doubleTapZoom: true,
+      controllerBox,
+      onLoad: onLoaded,
+      onPageChange: onPageChanged,
+      onError,
+    };
+
+    if (canJumpOnOpen && initialPage > 0) {
+      props.initialPosition = { pageIndex: initialPage };
+    }
+
+    return props;
+  }, [
+    source,
+    horizontal,
+    settings.fitMode,
+    controllerBox,
+    onLoaded,
+    onPageChanged,
+    onError,
+    canJumpOnOpen,
+    initialPage,
+  ]);
+
+  const EngineView = engine.ViewComponent;
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          headerTitle: reader.book?.title
-            ? () => (
-                <View style={styles.headerTitle}>
-                  <Text variant="label" numberOfLines={1}>
-                    {reader.book?.title}
-                  </Text>
-                  {reader.isLoaded && reader.pageCount !== null ? (
-                    <Text variant="tiny" tone="muted">
-                      Page {reader.currentPage + 1} of {reader.pageCount}
-                    </Text>
-                  ) : null}
-                </View>
-              )
-            : 'Reader',
-          headerStyle: { backgroundColor: readerTheme.surface },
-          headerTintColor: readerTheme.accent,
-          headerRight: () => (
-            <View style={styles.headerRight}>
-              <IconButton
-                name={mode === 'reflow' ? 'text' : 'layers-outline'}
-                accessibilityLabel={mode === 'reflow' ? 'Switch to PDF mode' : 'Switch to Reflow mode'}
-                size={22}
-                tone="accent"
-                onPress={handleToggleMode}
-              />
-              <IconButton
-                name={bookmarks.isCurrentPageBookmarked ? 'bookmark' : 'bookmark-outline'}
-                accessibilityLabel={
-                  bookmarks.isCurrentPageBookmarked ? 'Remove bookmark' : 'Add bookmark'
-                }
-                size={22}
-                tone="accent"
-                onPress={handleToggleBookmark}
-              />
-              <IconButton
-                name="cog-outline"
-                accessibilityLabel="Settings"
-                size={22}
-                tone="accent"
-                onPress={() => setShowSettings(true)}
-              />
-            </View>
-          ),
-        }}
-      />
+      <Stack.Screen options={headerOptions} />
 
       <Screen gutter={false} style={{ backgroundColor: readerTheme.background }}>
         {reader.isResolving ? (
@@ -253,37 +345,21 @@ export default function ReaderScreen() {
             ) : (
               // PDF mode - page-based rendering
               <>
-                {(() => {
-                  const engineProps: PdfEngineViewProps = {
-                    source: { kind: 'file', uri: reader.book.fileUri },
-                    horizontal,
-                    pagingEnabled: horizontal,
-                    fitMode: settings.fitMode,
-                    doubleTapZoom: true,
-                    controllerBox: reader.controllerBox,
-                    onLoad: reader.onLoaded,
-                    onPageChange: reader.onPageChanged,
-                    onError: reader.onError,
-                  };
-                  // initialPosition handled by useReader via restored page
-                  if (engine.capabilities.jumpToInitialPage && reader.currentPage > 0) {
-                    engineProps.initialPosition = { pageIndex: reader.currentPage };
-                  }
-                  return <engine.ViewComponent {...engineProps} />;
-                })()}
+                {engineProps ? <EngineView {...engineProps} /> : null}
 
-                {/* Bottom controls bar */}
+                {/* Bottom controls bar — owns the page indicator. */}
                 {reader.isLoaded && (
                   <ReaderControls
                     currentPage={reader.currentPage}
                     pageCount={reader.pageCount}
                     horizontal={horizontal}
+                    bottomInset={insets.bottom}
                     onPrev={goPrev}
                     onNext={goNext}
-                    onToggleLayout={() => setHorizontal((value) => !value)}
-                    onSettings={() => setShowSettings(true)}
+                    onToggleLayout={toggleLayout}
+                    onSettings={openSettings}
                     onToggleBookmark={handleToggleBookmark}
-                    isBookmarked={bookmarks.isCurrentPageBookmarked}
+                    isBookmarked={isBookmarked}
                     onJumpToPage={handleJumpToPage}
                   />
                 )}
@@ -294,8 +370,9 @@ export default function ReaderScreen() {
               <BookmarkSheet
                 bookmarks={bookmarks.bookmarks}
                 currentPage={reader.currentPage}
+                bottomInset={insets.bottom}
                 onJump={handleJumpToBookmark}
-                onClose={() => setShowBookmarks(false)}
+                onClose={closeBookmarks}
                 onDelete={bookmarks.removeBookmark}
               />
             )}
@@ -304,13 +381,10 @@ export default function ReaderScreen() {
               <SettingsSheet
                 settings={settings}
                 capabilities={capabilities}
+                bottomInset={insets.bottom}
                 onUpdate={updateSettings}
-                onClose={() => setShowSettings(false)}
-                onReset={() => {
-                  // Reset is handled by the SettingsSheet internally
-                  // We just close the sheet
-                  setShowSettings(false);
-                }}
+                onClose={closeSettings}
+                onReset={closeSettings}
               />
             )}
           </View>
@@ -331,31 +405,48 @@ export default function ReaderScreen() {
 interface BookmarkSheetProps {
   bookmarks: { id: string; page: number; createdAt: Date; title: string | null }[];
   currentPage: number;
+  /** Bottom safe-area inset; the sheet is absolutely positioned at bottom: 0. */
+  bottomInset: number;
   onJump: (bookmarkId: string) => void;
   onClose: () => void;
   onDelete: (bookmarkId: string) => Promise<void>;
 }
 
-function BookmarkSheet({ bookmarks, currentPage, onJump, onClose, onDelete }: BookmarkSheetProps) {
+/**
+ * Bookmark list sheet. Memoized: it is a sibling of the PDF view and must not
+ * re-render on every page change, only when the bookmark set or current page
+ * actually moves.
+ */
+const BookmarkSheet = memo(function BookmarkSheet({
+  bookmarks,
+  currentPage,
+  bottomInset,
+  onJump,
+  onClose,
+  onDelete,
+}: BookmarkSheetProps) {
   const { colors } = useTheme();
-  const { format } = useMemo(
-    () => ({
-      format: (date: Date) => {
-        const formatter = new Intl.DateTimeFormat(undefined, {
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-        return formatter.format(date);
-      },
-    }),
-    [],
-  );
+
+  // One formatter for the whole list; constructing Intl.DateTimeFormat per row
+  // is expensive and was previously rebuilt on each render.
+  const format = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    return (date: Date) => formatter.format(date);
+  }, []);
+
+  const sheetStyle = [
+    styles.sheet,
+    { backgroundColor: colors.surface, paddingBottom: bottomInset },
+  ];
 
   if (bookmarks.length === 0) {
     return (
-      <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+      <View style={sheetStyle}>
         <View style={styles.sheetHeader}>
           <Text variant="label">Bookmarks</Text>
           <IconButton
@@ -376,7 +467,7 @@ function BookmarkSheet({ bookmarks, currentPage, onJump, onClose, onDelete }: Bo
   }
 
   return (
-    <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+    <View style={sheetStyle}>
       <View style={styles.sheetHeader}>
         <Text variant="label">Bookmarks</Text>
         <IconButton
@@ -426,7 +517,7 @@ function BookmarkSheet({ bookmarks, currentPage, onJump, onClose, onDelete }: Bo
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   flex: {
@@ -446,13 +537,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-  },
-  pageBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 4,
   },
   sheet: {
     position: 'absolute',
@@ -481,7 +565,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sheetContent: {
-    maxHeight: '60%',
+    // No maxHeight: the sheet's own maxHeight bounds it, and a nested percentage
+    // cap clipped the last rows with no way to reach them.
+    flexShrink: 1,
   },
   bookmarkItem: {
     flexDirection: 'row',

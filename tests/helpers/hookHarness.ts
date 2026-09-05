@@ -208,3 +208,48 @@ export function unmountHook(): void {
   slots = [];
   effectIndexes = [];
 }
+
+/**
+ * Re-renders the CURRENT hook instance to a fixed point without resetting its
+ * slots — the harness equivalent of an interaction followed by `act()`.
+ *
+ * Use after invoking a callback returned by the hook, to observe what the next
+ * committed render looks like. `driveHook` mounts fresh; this continues.
+ */
+export async function settleHook<T>(
+  render: () => T,
+  options?: { maxPasses?: number; settleTicks?: number },
+): Promise<DriveResult<T>> {
+  const maxPasses = options?.maxPasses ?? 25;
+  const settleTicks = options?.settleTicks ?? 6;
+  const snapshots: T[] = [];
+
+  const effectRuns = (): number[] =>
+    slots.filter((slot) => slot.kind === 'effect').map((slot) => slot.runs);
+
+  for (let pass = 0; pass < maxPasses; pass++) {
+    cursor = 0;
+    dirty = false;
+    snapshots.push(render());
+
+    for (const index of [...effectIndexes]) {
+      const slot = slots[index];
+      if (!slot || slot.kind !== 'effect' || !slot.pending || !slot.fn) continue;
+      slot.pending = false;
+      if (slot.cleanup) slot.cleanup();
+      slot.runs++;
+      const cleanup = slot.fn();
+      slot.cleanup = typeof cleanup === 'function' ? cleanup : undefined;
+    }
+
+    for (let tick = 0; tick < settleTicks; tick++) {
+      await flushMicrotasks();
+    }
+
+    if (!dirty) {
+      return { settled: true, passes: pass + 1, effectRuns: effectRuns(), snapshots };
+    }
+  }
+
+  return { settled: false, passes: maxPasses, effectRuns: effectRuns(), snapshots };
+}

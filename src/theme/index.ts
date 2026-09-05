@@ -35,4 +35,12 @@ export {
   type CommonStyles,
 } from './commonStyles';
 
+export {
+  useGridMetrics,
+  COMPACT_WIDTH,
+  WIDE_WIDTH,
+  type GridMetrics,
+  type GridOptions,
+} from './layout';
+
 export { READER_THEMES, type ReaderThemeTokens } from './readerThemes';

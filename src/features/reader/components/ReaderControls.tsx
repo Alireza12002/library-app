@@ -1,7 +1,15 @@
 /**
  * ReaderControls — bottom toolbar with page navigation and settings.
+ *
  * Pure presentational component; all callbacks provided by parent.
+ *
+ * Memoized: it sits beside the native PDF view and re-renders on every page
+ * turn. `memo` limits that to the props that actually changed — in practice
+ * `currentPage` — instead of letting the parent's render walk the whole subtree.
+ * All callbacks arriving here are stabilized with useCallback by the reader
+ * screen, so the memo comparison genuinely bails out.
  */
+import { memo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { IconButton, Text } from '@/components/ui';
 
@@ -12,6 +20,12 @@ export interface ReaderControlsProps {
   pageCount: number | null;
   /** Whether horizontal/paged layout is active. */
   horizontal: boolean;
+  /**
+   * Bottom safe-area inset, in points. The bar sits at the bottom of a
+   * full-screen route with no tab bar beneath it, so it must lift itself clear
+   * of the gesture pill / navigation buttons. Device-measured, never hardcoded.
+   */
+  bottomInset?: number;
   /** Callback to go to previous page. */
   onPrev: () => void;
   /** Callback to go to next page. */
@@ -28,10 +42,11 @@ export interface ReaderControlsProps {
   onJumpToPage: () => void;
 }
 
-export function ReaderControls({
+export const ReaderControls = memo(function ReaderControls({
   currentPage,
   pageCount,
   horizontal,
+  bottomInset = 0,
   onPrev,
   onNext,
   onToggleLayout,
@@ -41,7 +56,7 @@ export function ReaderControls({
   onJumpToPage,
 }: ReaderControlsProps) {
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: bottomInset }]}>
       <View style={styles.leftGroup}>
         <IconButton
           name="chevron-back"
@@ -105,7 +120,7 @@ export function ReaderControls({
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -113,8 +128,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    height: 56,
+    paddingTop: 8,
+    // No fixed `height`: the row must be able to grow by the bottom inset on
+    // devices that have one, instead of clipping its own controls.
+    minHeight: 56,
   },
   leftGroup: {
     flexDirection: 'row',
@@ -136,8 +153,10 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   pageInfo: {
-    minWidth: 80,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    // minWidth, not a fixed width: long page counts (1000+) must not clip.
+    minWidth: 72,
   },
 });

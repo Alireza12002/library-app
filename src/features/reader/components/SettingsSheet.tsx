@@ -1,8 +1,16 @@
 /**
  * SettingsSheet — reader settings bottom sheet.
+ *
  * Pure presentational component; all state and callbacks provided by parent.
+ *
+ * The body is a ScrollView: the sheet is capped at 80% of the screen and its
+ * content (mode + theme + fit mode + optional appearance/gap sections) is taller
+ * than that on small phones, so a plain View clipped the last rows with no way
+ * to reach them. Bounding the sheet and scrolling inside it is the fix — raising
+ * the cap would just push the overflow off a different screen size.
  */
-import { Pressable, StyleSheet, View } from 'react-native';
+import { memo } from 'react';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Divider, Icon, IconButton, Section, Text } from '@/components/ui';
 import { useTheme } from '@/theme';
 import type { ReadingSettings, FitMode } from '@/core/entities/readingSettings';
@@ -11,38 +19,47 @@ import type { PdfEngineCapabilities } from '@/core/ports/pdfEngine';
 export interface SettingsSheetProps {
   settings: ReadingSettings;
   capabilities: PdfEngineCapabilities;
+  /**
+   * Bottom safe-area inset, in points. The sheet is absolutely positioned at
+   * bottom: 0 over a full-screen route, so its last row would otherwise sit
+   * under the system navigation area. Device-measured, never hardcoded.
+   */
+  bottomInset?: number;
   onUpdate: (patch: Partial<ReadingSettings>) => void;
   onClose: () => void;
   onReset: () => void;
 }
 
-export function SettingsSheet({
+const LAYOUT_OPTIONS = [
+  { value: 'pdf', label: 'PDF Layout', description: 'Original document layout' },
+  { value: 'reflow', label: 'Reflow Text', description: 'Continuous, reflowable text' },
+] as const;
+
+const THEME_OPTIONS = [
+  { value: 'light', label: 'Light', description: 'White background' },
+  { value: 'sepia', label: 'Sepia', description: 'Warm paper tone' },
+  { value: 'dark', label: 'Dark', description: 'Dark background' },
+] as const;
+
+const FIT_MODE_OPTIONS = [
+  { value: 'width', label: 'Fit Width', description: 'Page fits screen width' },
+  { value: 'height', label: 'Fit Height', description: 'Page fits screen height' },
+  { value: 'both', label: 'Fit Both', description: 'Page fits both dimensions' },
+] as const;
+
+export const SettingsSheet = memo(function SettingsSheet({
   settings,
   capabilities,
+  bottomInset = 0,
   onUpdate,
   onClose,
   onReset,
 }: SettingsSheetProps) {
   const { colors, spacing } = useTheme();
 
-  // Layout mode - only 'pdf' is available (reflow is Phase 8)
-  const layoutOptions = [
-    { value: 'pdf', label: 'PDF Layout', description: 'Original document layout' },
-  ];
-
-  // Theme options
-  const themeOptions = [
-    { value: 'light', label: 'Light', description: 'White background' },
-    { value: 'sepia', label: 'Sepia', description: 'Warm paper tone' },
-    { value: 'dark', label: 'Dark', description: 'Dark background' },
-  ];
-
-  // Fit mode options - filter by engine capabilities
-  const fitModeOptions = [
-    { value: 'width', label: 'Fit Width', description: 'Page fits screen width' },
-    { value: 'height', label: 'Fit Height', description: 'Page fits screen height' },
-    { value: 'both', label: 'Fit Both', description: 'Page fits both dimensions' },
-  ].filter((opt) => capabilities.fitModes.includes(opt.value as FitMode));
+  const fitModeOptions = FIT_MODE_OPTIONS.filter((opt) =>
+    capabilities.fitModes.includes(opt.value as FitMode),
+  );
 
   const canInvertPages = capabilities.invertPages;
   const canPageGap = capabilities.pageGap;
@@ -74,17 +91,30 @@ export function SettingsSheet({
 
       <Divider />
 
-      <View style={styles.sheetContent}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          // Safe-area inset lives on the scroll CONTENT, not the container, so
+          // the last row can be scrolled clear of the system nav area instead of
+          // being permanently padded away from it.
+          { paddingBottom: spacing.xxl + bottomInset },
+        ]}
+        showsVerticalScrollIndicator
+        // Lets a drag that starts on a settings row still scroll the sheet.
+        keyboardShouldPersistTaps="handled"
+        // Dismisses the keyboard on drag if a future revision adds a text input.
+        keyboardDismissMode="on-drag"
+      >
         {/* Reading Mode */}
-        <Section title="Reading Mode" description="Reflow mode coming in a future update">
-          {layoutOptions.map((opt) => (
+        <Section title="Reading Mode" description="Switch between original pages and reflowed text">
+          {LAYOUT_OPTIONS.map((opt) => (
             <SettingRow
               key={opt.value}
               label={opt.label}
               description={opt.description}
               selected={settings.mode === opt.value}
               onPress={() => onUpdate({ mode: opt.value as ReadingSettings['mode'] })}
-              disabled={layoutOptions.length === 1}
             />
           ))}
         </Section>
@@ -93,7 +123,7 @@ export function SettingsSheet({
 
         {/* Theme */}
         <Section title="Theme">
-          {themeOptions.map((opt) => (
+          {THEME_OPTIONS.map((opt) => (
             <SettingRow
               key={opt.value}
               label={opt.label}
@@ -129,52 +159,45 @@ export function SettingsSheet({
               ))}
             </Section>
 
-            <Divider style={{ marginVertical: spacing.md }} />
-
-            {/* Invert Pages */}
             {canInvertPages && (
               <>
+                <Divider style={{ marginVertical: spacing.md }} />
                 <Section title="Page Appearance">
                   <SettingRow
                     label="Invert Pages"
                     description="Dark mode for PDF content"
                     selected={settings.invertPages}
-                    onPress={() => onUpdate({ invertPages: !settings.invertPages })}
                     type="toggle"
                     value={settings.invertPages}
                     onToggle={(value) => onUpdate({ invertPages: value })}
                   />
                 </Section>
-
-                <Divider style={{ marginVertical: spacing.md }} />
               </>
             )}
 
-            {/* Page Gap */}
             {canPageGap && (
-              <Section title="Page Gap" description="Adjust spacing between pages">
-                <SettingRow
-                  label="Page Gap"
-                  description={settings.pageGap === 0 ? 'Default' : `${settings.pageGap}pt`}
-                  selected={false}
-                  onPress={() => {}}
-                  type="slider"
-                  value={settings.pageGap}
-                  min={0}
-                  max={20}
-                  step={1}
-                  onChange={(value) => onUpdate({ pageGap: value })}
-                />
-              </Section>
+              <>
+                <Divider style={{ marginVertical: spacing.md }} />
+                <Section title="Page Gap" description="Adjust spacing between pages">
+                  <SettingRow
+                    label="Page Gap"
+                    description={settings.pageGap === 0 ? 'Default' : `${settings.pageGap}pt`}
+                    selected={false}
+                    type="slider"
+                    value={settings.pageGap}
+                    min={0}
+                    max={20}
+                    step={1}
+                  />
+                </Section>
+              </>
             )}
           </>
         )}
-
-        <View style={styles.bottomSpacer} />
-      </View>
+      </ScrollView>
     </View>
   );
-}
+});
 
 interface SettingRowProps {
   label: string;
@@ -201,9 +224,7 @@ function SettingRow({
   value,
   min,
   max,
-  step,
   onToggle,
-  onChange,
 }: SettingRowProps) {
   const { colors } = useTheme();
 
@@ -298,6 +319,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    // Bounds the sheet; the ScrollView inside handles any overflow.
     maxHeight: '80%',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -320,10 +342,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  sheetContent: {
-    maxHeight: '70%',
+  scroll: {
+    // flexShrink lets the scroll view take only the space the sheet's maxHeight
+    // leaves after the header, instead of a percentage guess.
+    flexShrink: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingTop: 8,
   },
   settingRow: {
     flexDirection: 'row',
@@ -331,6 +357,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 14,
     paddingHorizontal: 4,
+    // Keeps rows tappable at accessibility minimum on every text scale.
+    minHeight: 44,
   },
   settingInfo: {
     flex: 1,
@@ -380,8 +408,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 2,
     elevation: 2,
-  },
-  bottomSpacer: {
-    height: 32,
   },
 });

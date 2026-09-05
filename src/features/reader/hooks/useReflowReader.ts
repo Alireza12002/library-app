@@ -83,15 +83,34 @@ export function useReflowReader(
   const extractionInFlightRef = useRef<Set<number>>(new Set());
   const engineRef = useRef(getTextExtractionEngine());
 
+  // Mirrors of state that stable callbacks read without listing as dependencies.
+  // Synced in an effect, never during render: assigning a ref while rendering
+  // breaks under StrictMode's double render and concurrent re-entry. Effects
+  // flush before any user interaction or scroll callback, so these are current
+  // by the time anything reads them.
+  const extractedPagesRef = useRef<Set<number>>(state.extractedPages);
+  const pageCountRef = useRef<number | null>(state.pageCount);
+  const blocksRef = useRef<TextBlock[]>(state.blocks);
+
+  useEffect(() => {
+    extractedPagesRef.current = state.extractedPages;
+    pageCountRef.current = state.pageCount;
+    blocksRef.current = state.blocks;
+  }, [state.extractedPages, state.pageCount, state.blocks]);
+
   const loadPages = useCallback(
     async (startPage: number, endPage: number) => {
       if (!sourceRef.current || !enabled) return;
       const { textExtraction } = await getServices();
 
-      // Skip already extracted or in-flight pages
+      // Skip already extracted or in-flight pages. Read the live extracted set
+      // from a ref, not from state: depending on state.extractedPages here made
+      // this callback's identity change on every extraction, which in turn
+      // re-triggered the resolve effect that lists it as a dependency.
+      const extracted = extractedPagesRef.current;
       const pagesToLoad: number[] = [];
       for (let p = startPage; p <= endPage; p++) {
-        if (!state.extractedPages.has(p) && !extractionInFlightRef.current.has(p)) {
+        if (!extracted.has(p) && !extractionInFlightRef.current.has(p)) {
           pagesToLoad.push(p);
         }
       }
@@ -161,7 +180,7 @@ export function useReflowReader(
         }));
       }
     },
-    [enabled, state.extractedPages]
+    [enabled]
   );
 
   // Create the TextExtractionSource from the book
@@ -177,10 +196,16 @@ export function useReflowReader(
     };
   }, [book]);
 
-  // Resolve page count and initial extraction when enabled and book changes
+  // Resolve page count and initial extraction when enabled and book changes.
+  //
+  // When NOT enabled (i.e. PDF mode is showing) this must be a true no-op. It
+  // previously called setState with a spread on every run, which allocated a new
+  // state object and forced an extra render of the whole reader screen even
+  // though reflow was inert. The guard below bails out unless the flag actually
+  // needs to move, so PDF mode pays nothing for this hook.
   useEffect(() => {
     if (!enabled || !book || !source) {
-      setState((s) => ({ ...s, isResolving: !enabled }));
+      setState((s) => (s.isResolving === !enabled ? s : { ...s, isResolving: !enabled }));
       return;
     }
 
@@ -217,13 +242,15 @@ export function useReflowReader(
   const ensurePagesLoaded = useCallback(
     async (startPage: number, endPage: number) => {
       if (!enabled || !sourceRef.current) return;
-      const pageCount = state.pageCount ?? 0;
+      // Page count from a ref: this callback is handed to ReflowReader's scroll
+      // path, so its identity must not change every time a batch lands.
+      const pageCount = pageCountRef.current ?? 0;
       const clampedStart = Math.max(0, startPage);
       const clampedEnd = Math.min(pageCount - 1, endPage);
       if (clampedStart > clampedEnd) return;
       await loadPages(clampedStart, clampedEnd);
     },
-    [enabled, state.pageCount, loadPages]
+    [enabled, loadPages]
   );
 
   const refreshPage = useCallback(
@@ -264,7 +291,12 @@ export function useReflowReader(
     extractionInFlightRef.current.clear();
   }, []);
 
-  // Update reading position based on scroll
+  // Update reading position based on scroll.
+  //
+  // This runs on the reflow scroll path, so it must be stable and must not read
+  // state directly — depending on state.blocks/extractedPages gave it a new
+  // identity on every extraction batch, which re-registered the scroll handler
+  // mid-scroll.
   const updateReadingPosition = useCallback(
     (scrollY: number, visibleBlocks: { index: number; text: string }[]) => {
       if (visibleBlocks.length === 0) {
@@ -282,14 +314,10 @@ export function useReflowReader(
       const anchorBlock = visibleBlocks[0]!;
       const textAnchor = anchorBlock.text.slice(0, 50);
 
-      // Find the page index for this block
-      let pageIndex = 0;
-      // Rough estimation: assume blocks are roughly evenly distributed across pages
-      if (state.extractedPages.size > 0) {
-        const pagesArray = Array.from(state.extractedPages).sort((a, b) => a - b);
-        const blocksPerPage = state.blocks.length / pagesArray.length;
-        pageIndex = pagesArray[Math.floor(anchorBlock.index / Math.max(1, blocksPerPage))] ?? 0;
-      }
+      // Source page for this block. Prefer the block's own pageIndex — it is
+      // recorded by the parser — instead of estimating from block distribution.
+      const anchor = blocksRef.current[anchorBlock.index];
+      const pageIndex = anchor?.pageIndex ?? 0;
 
       setState((s) => ({
         ...s,
@@ -302,8 +330,16 @@ export function useReflowReader(
         },
       }));
     },
-    [state.blocks.length, state.extractedPages])
-  // Restore reading position on re-entry
+    [],
+  );
+
+  // Restore reading position on re-entry.
+  //
+  // Reads state directly, NOT a ref mirror: ReflowReader calls this from an
+  // effect, and a child's effects run before the parent's, so a ref synced in a
+  // parent effect would still be stale here. The identity churn is harmless —
+  // ReflowReader guards the call with a "already restored" ref, so the extra
+  // effect runs do no work.
   const restoreReadingPosition = useCallback((): {
     blockIndex: number;
     charOffset: number;
@@ -312,9 +348,11 @@ export function useReflowReader(
     const pos = state.readingPosition;
     if (!pos) return null;
 
+    const blocks = state.blocks;
+
     // Try to verify text anchor matches
-    if (pos.blockIndex < state.blocks.length) {
-      const block = state.blocks[pos.blockIndex]!;
+    if (pos.blockIndex < blocks.length) {
+      const block = blocks[pos.blockIndex]!;
       const currentAnchor = block.text.slice(0, 50);
       if (currentAnchor === pos.textAnchor) {
         // Anchor matches - restore exact position
@@ -324,8 +362,8 @@ export function useReflowReader(
 
     // Anchor doesn't match - try to find by text search
     if (pos.textAnchor) {
-      for (let i = 0; i < state.blocks.length; i++) {
-        if (state.blocks[i]!.text.startsWith(pos.textAnchor)) {
+      for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i]!.text.startsWith(pos.textAnchor)) {
           return { blockIndex: i, charOffset: pos.charOffset, scrollY: pos.scrollY ?? 0 };
         }
       }
