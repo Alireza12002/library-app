@@ -59,6 +59,23 @@ function getBookIdFromSource(source: TextExtractionSource): string {
   return source.uri;
 }
 
+/**
+ * Shapes an extracted page for the parser.
+ *
+ * `images` is omitted rather than set to undefined: the project builds with
+ * `exactOptionalPropertyTypes`, so an explicit undefined is not assignable to an
+ * optional property.
+ */
+function toParserInput(page: ExtractedPageText): {
+  pageIndex: number;
+  text: string;
+  images?: { marker: string; uri: string; width: number; height: number }[];
+} {
+  return page.images && page.images.length > 0
+    ? { pageIndex: page.pageIndex, text: page.text, images: page.images }
+    : { pageIndex: page.pageIndex, text: page.text };
+}
+
 export function createTextExtractionService(
   deps: TextExtractionServiceDeps,
 ): TextExtractionService {
@@ -86,11 +103,58 @@ export function createTextExtractionService(
     },
 
     async getPageRangeText(source, startPage, endPage) {
+      // Delegated to the engine in one call rather than looped page-by-page: the
+      // engine parses the document once and can batch, and the SQLite cache is
+      // consulted first for the whole span. Looping here re-entered the service
+      // per page, which is what made the first reflow batch slow.
+      const bookId = getBookIdFromSource(source);
+
+      const cachedPages = new Map<number, string>();
+      for (let page = startPage; page <= endPage; page++) {
+        const cached = await cache.getPage(bookId, page);
+        if (cached) cachedPages.set(page, cached.text);
+      }
+
       const results: ExtractedPageText[] = [];
+      const missing: number[] = [];
+      for (let page = startPage; page <= endPage; page++) {
+        if (!cachedPages.has(page)) missing.push(page);
+      }
+
+      // Images are not persisted in the text cache, so any page whose images are
+      // needed must come from the engine. Cached text is still used for pages the
+      // engine is not asked about.
+      if (missing.length > 0) {
+        if (!engine.capabilities.extractText) {
+          throw new DomainError('unknown', 'Text extraction not supported by current PDF engine');
+        }
+
+        // One engine call spanning the missing pages (half-open at the port).
+        const first = missing[0]!;
+        const last = missing[missing.length - 1]!;
+        const range = await engine.extractPageRange(source, first, last + 1);
+
+        for (const page of range.pages) {
+          await cache.savePage(bookId, page.pageIndex, page.text);
+          cachedPages.set(page.pageIndex, page.text);
+        }
+
+        // Return engine results (with images) for extracted pages, cache for the rest.
+        const engineByIndex = new Map(range.pages.map((page) => [page.pageIndex, page]));
+        for (let page = startPage; page <= endPage; page++) {
+          const fromEngine = engineByIndex.get(page);
+          if (fromEngine) {
+            results.push(fromEngine);
+            continue;
+          }
+          results.push({ pageIndex: page, text: cachedPages.get(page) ?? '' });
+        }
+
+        return { startIndex: startPage, endIndex: endPage + 1, pages: results };
+      }
 
       for (let page = startPage; page <= endPage; page++) {
-        const extracted = await this.getPageText(source, page);
-        results.push(extracted);
+        results.push({ pageIndex: page, text: cachedPages.get(page) ?? '' });
       }
 
       return { startIndex: startPage, endIndex: endPage + 1, pages: results };
@@ -98,13 +162,13 @@ export function createTextExtractionService(
 
     async getParsedPage(source, page) {
       const extracted = await this.getPageText(source, page);
-      const parsed = parseExtractedText([{ pageIndex: extracted.pageIndex, text: extracted.text }]);
+      const parsed = parseExtractedText([toParserInput(extracted)]);
       return parsed[0] ?? { pageIndex: page, blocks: [] };
     },
 
     async getParsedPageRange(source, startPage, endPage) {
       const range = await this.getPageRangeText(source, startPage, endPage);
-      return parseExtractedText(range.pages.map((p) => ({ pageIndex: p.pageIndex, text: p.text })));
+      return parseExtractedText(range.pages.map(toParserInput));
     },
 
     async getFlattenedBlocks(source, startPage, endPage) {

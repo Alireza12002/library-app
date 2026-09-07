@@ -5,7 +5,7 @@
  * the imperative navigation box. The screen renders; this decides.
  * Reading progress persistence is delegated to useReadingProgress.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { Book } from '@/core/entities/book';
 import type { PdfEngineController, PdfEngineError } from '@/core/ports/pdfEngine';
@@ -36,6 +36,20 @@ export interface UseReaderResult {
   renderError: PdfEngineError | null;
   isLoaded: boolean;
   controllerBox: { current: PdfEngineController | null };
+  /**
+   * Navigates the mounted document to a 0-based page index, clamped to the
+   * document's range.
+   *
+   * This is the only navigation path callers should use. It issues a native
+   * command through the engine controller, so the document is NOT reopened or
+   * re-rasterized the way a prop change would force
+   * (PdfManager.onAfterUpdateTransaction → PdfView.drawPdf). Stable identity, so
+   * it is safe in a memoized callback's dependency list.
+   *
+   * No-op when the renderer is not mounted yet. `currentPage` is not written
+   * here: the renderer's onPageChange remains the single source of truth.
+   */
+  setPage: (pageIndex: number) => void;
   onLoaded: (info: { pageCount: number }) => void;
   onPageChanged: (position: { pageIndex: number }) => void;
   onError: (error: PdfEngineError) => void;
@@ -52,10 +66,13 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
   const [initialPage, setInitialPage] = useState(initialPageIndex);
 
   // Stable mutable box; the adapter fills it while the native view is mounted.
-  const controllerBox = useMemo<{ current: PdfEngineController | null }>(
-    () => ({ current: null }),
-    [],
-  );
+  //
+  // useRef, not useMemo: both give a stable object, but only useRef is recognised
+  // as a ref by the React Compiler, which lets callers read `.current` inside a
+  // useCallback without it being inferred as a dependency. With useMemo the
+  // compiler treats `.current` as ordinary state and refuses to memoize the
+  // navigation callbacks (react-hooks/preserve-manual-memoization).
+  const controllerBox = useRef<PdfEngineController | null>(null);
 
   // Recency stamping lives here because this hook knows when the document has
   // actually rendered. (Recency data only — NOT persistent reading progress.)
@@ -170,6 +187,21 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
     setRenderError(error);
   }, []);
 
+  /**
+   * Imperative navigation. Clamping lives here rather than in each caller so
+   * every entry point (prev/next buttons, jump-to-page, bookmark jump) shares one
+   * validated path into the renderer.
+   */
+  const setPage = useCallback((pageIndex: number) => {
+    if (!Number.isFinite(pageIndex)) return;
+
+    const count = pageCountRef.current;
+    const upperBound = count === null ? Number.MAX_SAFE_INTEGER : Math.max(0, count - 1);
+    const target = Math.min(Math.max(0, Math.floor(pageIndex)), upperBound);
+
+    controllerBox.current?.setPage(target);
+  }, []);
+
   return {
     book,
     isResolving,
@@ -180,6 +212,7 @@ export function useReader(bookId: string, initialPageIndex: number): UseReaderRe
     renderError,
     isLoaded: pageCount !== null,
     controllerBox,
+    setPage,
     onLoaded,
     onPageChanged,
     onError,

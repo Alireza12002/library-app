@@ -2,15 +2,14 @@
  * TextParser — converts raw PDF text into readable blocks.
  * Deterministic parsing only; no AI, no OCR.
  * ARCHITECTURE.md §6 (Phase 7 text processing).
+ *
+ * `TextBlock` itself lives in core/entities/reflowDocument, because the PDF ↔
+ * reflow position mapping is domain logic and core/ may not import features/. It
+ * is re-exported here so existing call sites keep working.
  */
-export interface TextBlock {
-  /** Block type for rendering */
-  type: 'paragraph' | 'heading' | 'list_item' | 'code' | 'blockquote';
-  /** Clean text content */
-  text: string;
-  /** Original page index this block came from (for reference) */
-  pageIndex: number;
-}
+import type { TextBlock } from '@/core/entities/reflowDocument';
+
+export type { TextBlock } from '@/core/entities/reflowDocument';
 
 export interface ParsedPage {
   pageIndex: number;
@@ -295,20 +294,52 @@ function detectCodeBlocks(lines: string[]): [number, number][] {
 
 /**
  * Main parse function — converts raw page texts into structured, readable blocks.
+ *
+ * Image markers (see ExtractedPageImage) are expanded into `image` blocks at the
+ * position their marker line occupies, so figures keep their place in the reading
+ * order instead of collecting at the end of a page.
  */
 export function parseExtractedText(
-  pageTexts: { pageIndex: number; text: string }[],
+  pageTexts: {
+    pageIndex: number;
+    text: string;
+    images?: { marker: string; uri: string; width: number; height: number }[];
+  }[],
   options: TextParserOptions = {},
 ): ParsedPage[] {
   const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
 
-  // Parse each page individually first
+  // Parse each page individually first. A page with no text but with images is
+  // still meaningful content, so it must not be filtered out here.
   const pages: ParsedPage[] = pageTexts
-    .filter((pt) => pt.text.trim().length > 0)
+    .filter((pt) => pt.text.trim().length > 0 || (pt.images?.length ?? 0) > 0)
     .map((pt) => parsePageText(pt.pageIndex, pt.text, mergedOptions));
 
-  // Then attempt cross-page header/footer removal
-  return removeRepeatedHeadersFooters(pages, mergedOptions);
+  // Then attempt cross-page header/footer removal.
+  const cleaned = removeRepeatedHeadersFooters(pages, mergedOptions);
+
+  // Finally swap marker blocks for image blocks. Done last so header/footer
+  // detection never sees a marker as a candidate line.
+  return cleaned.map((page) => {
+    const source = pageTexts.find((pt) => pt.pageIndex === page.pageIndex);
+    const images = source?.images;
+    if (!images || images.length === 0) return page;
+
+    const byMarker = new Map(images.map((image) => [image.marker, image]));
+
+    const blocks = page.blocks.map((block): TextBlock => {
+      const image = byMarker.get(block.text.trim());
+      if (!image) return block;
+      return {
+        type: 'image',
+        text: '',
+        pageIndex: block.pageIndex,
+        image: { uri: image.uri, width: image.width, height: image.height },
+      };
+    });
+
+    return { ...page, blocks };
+  });
 }
 
 /**

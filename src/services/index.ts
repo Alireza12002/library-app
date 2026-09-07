@@ -14,27 +14,33 @@ import { expoFileSystemStorage } from '@/files/storage';
 import { createBookService, type BookService } from './bookService';
 import { createBookmarkService, type BookmarkService } from './bookmarkService';
 import { createImportService, type ImportService } from './importService';
+import { createReflowService, type ReflowService } from './reflowService';
 import { createTextExtractionService, type TextExtractionService } from './textExtractionService';
 
 export { type BookService } from './bookService';
 export { createBookmarkService, type BookmarkService } from './bookmarkService';
 export { createImportService, type ImportResult, type ImportService } from './importService';
 export { createTextExtractionService, type TextExtractionService } from './textExtractionService';
+export {
+  createReflowService,
+  withPageStarts,
+  type ReflowGenerationOptions,
+  type ReflowProgress,
+  type ReflowService,
+} from './reflowService';
 
-let instances: {
+interface ServiceRegistry {
   books: BookService;
   bookmarks: BookmarkService;
   imports: ImportService;
   textExtraction: TextExtractionService;
-} | null = null;
+  reflow: ReflowService;
+}
+
+let instances: ServiceRegistry | null = null;
 
 /** The shared services bound to real repositories, storage and the picker. */
-export async function getServices(): Promise<{
-  books: BookService;
-  bookmarks: BookmarkService;
-  imports: ImportService;
-  textExtraction: TextExtractionService;
-}> {
+export async function getServices(): Promise<ServiceRegistry> {
   if (instances) return instances;
 
   const repos = await getRepositories();
@@ -63,12 +69,20 @@ export async function getServices(): Promise<{
     createBook: (input) => repos.books.create(input),
   });
 
+  const engine = getTextExtractionEngine();
+
   const textExtraction = createTextExtractionService({
-    engine: getTextExtractionEngine(),
+    engine,
     cache: repos.textCache,
   });
 
-  instances = { books, bookmarks, imports, textExtraction };
+  const reflow = createReflowService({
+    textExtraction,
+    repository: repos.reflowDocuments,
+    getPageCount: (source) => engine.getPageCount(source),
+  });
+
+  instances = { books, bookmarks, imports, textExtraction, reflow };
   return instances;
 }
 

@@ -5,26 +5,24 @@ import { TabBarIcon } from '@/components/ui';
 import { useTheme } from '@/theme';
 
 /**
- * Tab group: the two top-level destinations. Labels and icons follow the
- * reference UI ("Home" + house, "Settings" + gear, outline set), with the
- * active item tinted terracotta.
+ * Tab group. The library is the only bottom-nav destination; Settings is reached
+ * from the gear in the library header instead (`href: null` keeps the route
+ * registered and linkable while hiding it from the bar).
  *
  * SAFE AREA
  * ---------
- * expo-router's BottomTabBar already adds `insets.bottom` as padding and to its
- * own height — but only for insets it can see, and the value it uses is
- * overridable by whatever `tabBarStyle` sets last. The previous static
- * `tabBarStyle` had no height/padding, and on Android the bar ended up under the
- * gesture pill / 3-button bar.
+ * expo-router's BottomTabBar adds `insets.bottom` itself, but whatever
+ * `tabBarStyle` sets last wins — and the previous static style declared neither a
+ * height nor bottom padding, so on Android the bar sat under the gesture pill /
+ * 3-button bar.
  *
- * Passing the measured inset explicitly via `tabBarStyle.paddingBottom` and
- * growing `height` by the same amount makes the bar lift itself clear of the
- * system navigation area on every device: it is 0 on hardware-key phones, ~16dp
- * with Android gesture nav, ~48dp with 3-button nav, and ~34dp for the iOS home
- * indicator. Nothing here is a fixed per-device offset.
+ * Passing the measured inset explicitly and growing the height by the same amount
+ * lifts the bar clear of the system navigation area on every device: 0 on
+ * hardware-key phones, ~16dp with Android gesture nav, ~48dp with 3-button nav,
+ * ~34dp for the iOS home indicator. No fixed per-device offset anywhere.
  */
 
-/** Bar content height, excluding the safe-area inset (matches the UIKit metric). */
+/** Bar content height, excluding the safe-area inset. */
 const TAB_BAR_CONTENT_HEIGHT = 56;
 
 export default function TabsLayout() {
@@ -39,6 +37,7 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: typography.tiny,
+        tabBarItemStyle: { paddingTop: 6 },
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
@@ -51,9 +50,9 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
+          title: 'Library',
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name="home-outline" color={color} focused={focused} />
+            <TabBarIcon name="library-outline" color={color} focused={focused} />
           ),
         }}
       />
@@ -61,9 +60,8 @@ export default function TabsLayout() {
         name="settings"
         options={{
           title: 'Settings',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name="settings-outline" color={color} focused={focused} />
-          ),
+          // Hidden from the bar; still reachable via the library header gear.
+          href: null,
         }}
       />
     </Tabs>

@@ -1,60 +1,71 @@
 /**
- * ReflowReader — continuous text rendering for Reflow mode.
+ * ReflowReader — responsive, ebook-style rendering of the whole-book reflow
+ * document.
  *
- * Virtualized FlatList of text blocks. Handles themes, font size, line height
- * and content width. No OCR — works only with extractable text.
+ * This is NOT a scaled PDF page. It renders the structured block model produced by
+ * the extraction pipeline (PDF → content streams → positioned runs → parsed blocks)
+ * as ordinary React Native Text, so lines wrap to the device width, the font size
+ * is independent of the original page scale, and there is no horizontal scrolling.
+ * Rotating or resizing the window reflows the text, because the measure derives
+ * from the live window width.
  *
- * PERFORMANCE CONTRACT
- * --------------------
- * Every value that reaches a row is memoized at this level, because the list can
- * hold thousands of blocks:
+ * POSITION
+ * --------
+ * The document arrives whole, so entering at a given PDF page is a `scrollToIndex`
+ * onto a real block (the index comes from the document's page map). While scrolling,
+ * the topmost visible block is reported back so the screen can map the position to a
+ * PDF page when the user switches modes.
  *
- *  - `getBlockStyle` used to run per row per render and allocate a fresh style
- *    object each time. Styles now come from one memoized lookup table keyed by
- *    block type, built only when the theme or typography settings change.
- *  - `renderItem` / `keyExtractor` / separators / footers are stable, so
- *    FlatList's own row memoization can bail out instead of re-rendering every
- *    realized row on each parent render.
- *  - Rows are wrapped in React.memo (`RenderBlock`), so a scroll that changes
- *    nothing about a row costs nothing.
- *  - `onScroll` is a plain JS handler at 16ms throttle; it does no layout work,
- *    only a debounced position update.
+ * PERFORMANCE
+ * -----------
+ * A book is thousands of blocks, so everything a row touches is precomputed: block
+ * styles come from one memoized table keyed by block type; renderItem/keyExtractor/
+ * footer are stable so FlatList's row memoization can bail out; rows are React.memo;
+ * and the visible-block report writes to a ref rather than state.
  */
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
   type ListRenderItemInfo,
   type TextStyle,
   type ViewToken,
 } from 'react-native';
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Screen } from '@/components/ui';
 import { useTheme, READER_THEMES, type ReaderThemeTokens } from '@/theme';
-import type { TextBlock } from '@/features/reader/textParser';
+import type { TextBlock } from '@/core/entities/reflowDocument';
 import type { ReflowReaderState } from '@/features/reader/hooks/useReflowReader';
 import type { ReadingSettings } from '@/core/entities/readingSettings';
+import { readingColumnWidth, scaleImageToColumn } from '@/features/reader/readingLayout';
 
 interface ReflowReaderProps {
   state: ReflowReaderState;
   settings: ReadingSettings;
-  ensurePagesLoaded: (startPage: number, endPage: number) => Promise<void>;
-  refreshPage: (page: number) => Promise<void>;
-  onScroll: (event: { nativeEvent: { contentOffset: { y: number } } }) => void;
-  updateReadingPosition: (scrollY: number, visibleBlocks: { index: number; text: string }[]) => void;
-  restoreReadingPosition: () => { blockIndex: number; charOffset: number; scrollY: number } | null;
+  /** Reports the topmost visible block so position can be mapped to a PDF page. */
+  onVisibleBlockChange: (blockIndex: number) => void;
+  /** Called once the pending entry scroll has been performed. */
+  onScrollTargetConsumed: () => void;
+  /** Discards the stored document and processes the book again. */
+  onRegenerate: () => void;
 }
 
-type BlockType = TextBlock['type'];
-type BlockStyles = Record<BlockType, TextStyle>;
+/**
+ * Text styles per block type. Image blocks are laid out, not typeset, so they are
+ * excluded here and sized by the renderer from the reading column width.
+ */
+type BlockStyles = Record<Exclude<TextBlock['type'], 'image'>, TextStyle>;
 
 /**
- * Builds one style object per block type. Called once per theme/typography
- * change instead of once per row per render.
+ * Builds one style per block type from the reading settings.
+ *
+ * Called only when the theme or typography changes — not per row, per render.
  */
 function buildBlockStyles(settings: ReadingSettings, theme: ReaderThemeTokens): BlockStyles {
   const base: TextStyle = {
@@ -64,57 +75,118 @@ function buildBlockStyles(settings: ReadingSettings, theme: ReaderThemeTokens): 
     color: theme.text,
   };
 
+  const headingSize = settings.fontSizePt * 1.3;
+
   return {
-    paragraph: { ...base, marginTop: 12, marginBottom: 12 },
+    paragraph: { ...base, marginBottom: settings.fontSizePt },
     heading: {
       ...base,
-      fontWeight: '600',
-      fontSize: settings.fontSizePt * 1.25,
-      lineHeight: settings.fontSizePt * 1.25 * settings.lineHeight,
-      marginTop: 24,
-      marginBottom: 12,
+      fontSize: headingSize,
+      lineHeight: headingSize * Math.max(1.2, settings.lineHeight - 0.15),
+      fontWeight: '700',
+      marginTop: settings.fontSizePt * 1.5,
+      marginBottom: settings.fontSizePt * 0.6,
     },
-    list_item: { ...base, marginTop: 6, marginBottom: 6, marginLeft: 24 },
+    list_item: { ...base, marginBottom: settings.fontSizePt * 0.4 },
     code: {
       ...base,
       fontFamily: 'monospace',
+      fontSize: settings.fontSizePt * 0.9,
+      lineHeight: settings.fontSizePt * 0.9 * settings.lineHeight,
       backgroundColor: theme.surface,
-      padding: 8,
-      borderRadius: 4,
-      marginTop: 8,
-      marginBottom: 8,
+      padding: settings.fontSizePt * 0.6,
+      borderRadius: 6,
+      marginBottom: settings.fontSizePt,
     },
     blockquote: {
       ...base,
       fontStyle: 'italic',
       borderLeftWidth: 3,
       borderLeftColor: theme.accent,
-      paddingLeft: 12,
-      marginLeft: 12,
-      opacity: 0.85,
-      marginTop: 12,
-      marginBottom: 12,
+      paddingLeft: settings.fontSizePt * 0.8,
+      marginBottom: settings.fontSizePt,
+      opacity: 0.9,
     },
   };
 }
 
-interface RenderBlockProps {
-  block: TextBlock;
-  blockStyles: BlockStyles;
+/** Removes a leading bullet/number marker; the rendered bullet replaces it. */
+function stripBullet(text: string): string {
+  return text.replace(/^\s*([-*•]|\d+[.)])\s+/, '');
 }
 
 /**
- * One text block. Memoized on (block, blockStyles) — both stable across scrolls,
- * so realized rows do not re-render while the list moves.
+ * An extracted figure, scaled to the reading column.
+ *
+ * Width is the column width; height follows from the intrinsic aspect ratio, so a
+ * wide PDF figure fits a phone without horizontal scrolling and grows on a tablet.
+ * Small figures are not upscaled — that would only blur them.
  */
-const RenderBlock = memo(function RenderBlock({ block, blockStyles }: RenderBlockProps) {
+const RenderImage = memo(function RenderImage({
+  block,
+  contentWidth,
+}: {
+  block: TextBlock;
+  contentWidth: number;
+}) {
+  const { colors } = useTheme();
+  const [failed, setFailed] = useState(false);
+  const onError = useCallback(() => setFailed(true), []);
+
+  const image = block.image;
+  if (!image || failed) {
+    return (
+      <View style={[styles.imageFallback, { borderColor: colors.border }]}>
+        <Text style={[styles.imageFallbackText, { color: colors.textMuted }]}>
+          [ Image unavailable ]
+        </Text>
+      </View>
+    );
+  }
+
+  const { width: displayWidth, height: displayHeight } = scaleImageToColumn(image, contentWidth);
+
+  return (
+    <View style={styles.imageWrap}>
+      <Image
+        source={{ uri: image.uri }}
+        style={{ width: displayWidth, height: displayHeight }}
+        resizeMode="contain"
+        onError={onError}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={block.text.length > 0 ? block.text : 'Figure from the document'}
+      />
+    </View>
+  );
+});
+
+/**
+ * One block. Memoized on (block, blockStyles, contentWidth) — all stable across
+ * scrolls, so realized rows do not re-render while the list moves.
+ *
+ * No `numberOfLines` on text: wrapping to the container width is the entire point.
+ */
+const RenderBlock = memo(function RenderBlock({
+  block,
+  blockStyles,
+  contentWidth,
+}: {
+  block: TextBlock;
+  blockStyles: BlockStyles;
+  contentWidth: number;
+}) {
+  if (block.type === 'image') {
+    return <RenderImage block={block} contentWidth={contentWidth} />;
+  }
+
   const style = blockStyles[block.type] ?? blockStyles.paragraph;
 
   if (block.type === 'list_item') {
     return (
       <View style={styles.listRow}>
         <Text style={[style, styles.bullet]}>•</Text>
-        <Text style={[style, styles.listText]}>{block.text}</Text>
+        <Text style={[style, styles.listText]}>{stripBullet(block.text)}</Text>
       </View>
     );
   }
@@ -122,37 +194,68 @@ const RenderBlock = memo(function RenderBlock({ block, blockStyles }: RenderBloc
   return <Text style={style}>{block.text}</Text>;
 });
 
-function LoadingIndicator() {
+function CenteredNotice({
+  title,
+  message,
+  action,
+}: {
+  title: string;
+  message: string;
+  action?: { label: string; onPress: () => void };
+}) {
   const { colors } = useTheme();
   return (
-    <View style={styles.loadingContainer}>
-      <ActivityIndicator color={colors.accent} size="small" />
-      <Text style={[styles.loadingText, { color: colors.textMuted }]}>Extracting text…</Text>
+    <View style={[styles.notice, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.noticeTitle, { color: colors.text }]}>{title}</Text>
+      <Text style={[styles.noticeMessage, { color: colors.textMuted }]}>{message}</Text>
+      {action ? (
+        <TouchableOpacity
+          style={[styles.noticeButton, { borderColor: colors.border }]}
+          onPress={action.onPress}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.noticeButtonText, { color: colors.accent }]}>{action.label}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  const { colors } = useTheme();
-  return (
-    <View style={[styles.errorContainer, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.errorTitle, { color: colors.text }]}>Extraction failed</Text>
-      <Text style={[styles.errorMessage, { color: colors.textMuted }]}>{message}</Text>
-      <TouchableOpacity style={styles.errorButton} onPress={onRetry}>
-        <Text style={[styles.errorButtonText, { color: colors.accent }]}>Retry</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
+/**
+ * Progress during the one-time whole-book pass.
+ *
+ * Shows real numbers from the extractor — pages processed and blocks produced — not
+ * an indeterminate spinner pretending to be progress.
+ */
+function GeneratingState({
+  processedPages,
+  totalPages,
+  blockCount,
+  theme,
+}: {
+  processedPages: number;
+  totalPages: number;
+  blockCount: number;
+  theme: ReaderThemeTokens;
+}) {
+  const percent = totalPages > 0 ? Math.round((processedPages / totalPages) * 100) : 0;
 
-function TextlessState() {
-  const { colors } = useTheme();
   return (
-    <View style={[styles.textlessContainer, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.textlessTitle, { color: colors.text }]}>No extractable text</Text>
-      <Text style={[styles.textlessMessage, { color: colors.textMuted }]}>
-        This PDF appears to be scanned or contains only images. Reflow mode requires selectable
-        text. Please use PDF mode instead.
+    <View style={styles.centered}>
+      <ActivityIndicator color={theme.accent} size="large" />
+      <Text style={[styles.generatingTitle, { color: theme.text }]}>Preparing reflow text</Text>
+      <Text style={[styles.generatingDetail, { color: theme.textMuted }]}>
+        {totalPages > 0
+          ? `Page ${processedPages} of ${totalPages} · ${percent}%`
+          : 'Reading the document…'}
+      </Text>
+      {blockCount > 0 ? (
+        <Text style={[styles.generatingDetail, { color: theme.textMuted }]}>
+          {blockCount} sections so far
+        </Text>
+      ) : null}
+      <Text style={[styles.generatingNote, { color: theme.textMuted }]}>
+        This happens once per book. Next time it opens instantly.
       </Text>
     </View>
   );
@@ -161,154 +264,140 @@ function TextlessState() {
 export function ReflowReader({
   state,
   settings,
-  refreshPage,
-  onScroll,
-  updateReadingPosition,
-  restoreReadingPosition,
+  onVisibleBlockChange,
+  onScrollTargetConsumed,
+  onRegenerate,
 }: ReflowReaderProps) {
   const theme = useMemo(() => READER_THEMES[settings.theme], [settings.theme]);
+  const { width: windowWidth } = useWindowDimensions();
 
-  // One style table for the whole list; rebuilt only when the reading typography
-  // or theme actually changes.
   const blockStyles = useMemo(() => buildBlockStyles(settings, theme), [settings, theme]);
 
-  const flatListRef = useRef<FlatList<TextBlock> | null>(null);
-  const restoredRef = useRef(false);
+  /**
+   * The reading measure, in points. Derived from the LIVE window width, which is
+   * what makes text reflow on rotation and split-screen.
+   */
+  const contentWidth = useMemo(
+    () => readingColumnWidth(windowWidth, settings.contentWidthPt),
+    [windowWidth, settings.contentWidthPt],
+  );
 
-  const contentWidth = settings.contentWidthPt > 0 ? settings.contentWidthPt : undefined;
+  const listRef = useRef<FlatList<TextBlock> | null>(null);
 
-  // Restore reading position once, after content first arrives.
+  /**
+   * Scrolls to the entry position once the list has content.
+   *
+   * This is what preserves the reading position across a mode switch: the target
+   * block index was computed from the PDF page the user was on.
+   */
+  const { scrollToBlock, blocks } = state;
   useEffect(() => {
-    if (restoredRef.current) return;
-    if (state.blocks.length === 0) return;
-    if (state.extractionStatus === 'loading') return;
+    if (scrollToBlock === null) return;
+    if (blocks.length === 0) return;
 
-    restoredRef.current = true;
-    const restored = restoreReadingPosition();
-    if (restored && flatListRef.current) {
-      flatListRef.current.scrollToIndex({
-        // A couple of blocks of lead-in for context.
-        index: Math.max(0, Math.min(restored.blockIndex - 2, state.blocks.length - 1)),
-        animated: false,
-      });
-    }
-  }, [state.blocks.length, state.extractionStatus, restoreReadingPosition]);
+    const index = Math.max(0, Math.min(scrollToBlock, blocks.length - 1));
+    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    onScrollTargetConsumed();
+  }, [scrollToBlock, blocks.length, onScrollTargetConsumed]);
 
-  // Visible rows, tracked for the reading-position anchor.
-  const viewableItemsRef = useRef<{ index: number; text: string }[]>([]);
+  /** Reports the topmost visible row so the position can map back to a PDF page. */
   const onViewableItemsChanged = useCallback(
     (info: { viewableItems: ViewToken<TextBlock>[] }) => {
-      const visible: { index: number; text: string }[] = [];
+      let topmost = Number.POSITIVE_INFINITY;
       for (const token of info.viewableItems) {
         if (token.index === null || token.index === undefined) continue;
-        visible.push({ index: token.index, text: token.item.text });
+        if (token.index < topmost) topmost = token.index;
       }
-      visible.sort((a, b) => a.index - b.index);
-      viewableItemsRef.current = visible;
+      if (Number.isFinite(topmost)) onVisibleBlockChange(topmost);
     },
-    [],
-  );
-
-  // Debounced position write. The scroll handler itself does no work beyond
-  // reading contentOffset, so it cannot stall the scroll.
-  const scrollUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleScroll = useCallback(
-    (event: { nativeEvent: { contentOffset: { y: number } } }) => {
-      onScroll(event);
-      const scrollY = event.nativeEvent.contentOffset.y;
-
-      if (scrollUpdateTimerRef.current) clearTimeout(scrollUpdateTimerRef.current);
-      scrollUpdateTimerRef.current = setTimeout(() => {
-        updateReadingPosition(scrollY, viewableItemsRef.current);
-      }, 150);
-    },
-    [onScroll, updateReadingPosition],
-  );
-
-  useEffect(
-    () => () => {
-      if (scrollUpdateTimerRef.current) clearTimeout(scrollUpdateTimerRef.current);
-    },
-    [],
+    [onVisibleBlockChange],
   );
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<TextBlock>) => (
-      <RenderBlock block={item} blockStyles={blockStyles} />
+      <RenderBlock block={item} blockStyles={blockStyles} contentWidth={contentWidth} />
     ),
-    [blockStyles],
+    [blockStyles, contentWidth],
   );
 
-  // Blocks carry their source page, so index-based keys are stable for a given
-  // extraction order and cheap to compute.
   const keyExtractor = useCallback(
-    (item: TextBlock, index: number) => `${item.pageIndex}-${index}`,
+    (item: TextBlock, index: number) => `${item.pageIndex}:${index}`,
     [],
   );
 
-  const isStreaming = state.extractionStatus !== 'complete';
-  const listFooter = useMemo(
-    () => (isStreaming ? <LoadingIndicator /> : <View style={styles.footer} />),
-    [isStreaming],
-  );
-
   const contentContainerStyle = useMemo(
-    () => [styles.content, contentWidth ? { maxWidth: contentWidth } : null],
+    () => ({
+      width: contentWidth,
+      alignSelf: 'center' as const,
+      paddingTop: 24,
+      paddingBottom: 64,
+    }),
     [contentWidth],
   );
 
-  const onScrollToIndexFailed = useCallback(() => {
-    // Restore target not laid out yet; fall back to the top rather than throwing.
-    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
-  }, []);
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      // The target row is not laid out yet. Jump to an estimated offset, then land
+      // exactly on the next frame — this is the documented FlatList recovery, not a
+      // guess at a pixel position.
+      listRef.current?.scrollToOffset({
+        offset: info.averageItemLength * info.index,
+        animated: false,
+      });
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 });
+      });
+    },
+    [],
+  );
 
-  if (state.isResolving) {
+  if (state.status === 'loading' || state.status === 'idle') {
     return (
       <Screen gutter={false} style={{ backgroundColor: theme.background }}>
         <View style={styles.centered}>
           <ActivityIndicator color={theme.accent} size="large" />
-          <Text style={[styles.loadingText, { color: theme.textMuted, marginTop: 12 }]}>
-            Opening document…
-          </Text>
         </View>
       </Screen>
     );
   }
 
-  if (state.fatal) {
+  if (state.status === 'generating') {
     return (
       <Screen gutter={false} style={{ backgroundColor: theme.background }}>
-        <View style={[styles.centered, styles.centeredPadded]}>
-          <Text style={[styles.errorTitle, { color: theme.text }]}>Cannot open</Text>
-          <Text style={[styles.errorMessage, { color: theme.textMuted, marginTop: 8 }]}>
-            {state.fatal}
-          </Text>
-        </View>
+        <GeneratingState
+          processedPages={state.progress?.processedPages ?? 0}
+          totalPages={state.progress?.totalPages ?? 0}
+          blockCount={state.progress?.blockCount ?? 0}
+          theme={theme}
+        />
       </Screen>
     );
   }
 
-  // Extraction finished with nothing to show: scanned/image-only document.
-  const isTextless =
-    state.extractionStatus === 'complete' && (state.isTextless || state.blocks.length === 0);
-  if (isTextless) {
+  if (state.status === 'error') {
     return (
       <Screen gutter={false} style={{ backgroundColor: theme.background }}>
         <View style={styles.centered}>
-          <TextlessState />
+          <CenteredNotice
+            title="Can't reflow this book"
+            message={state.error ?? 'The text could not be extracted.'}
+            action={{ label: 'Try again', onPress: onRegenerate }}
+          />
         </View>
       </Screen>
     );
   }
 
-  if (state.extractionStatus === 'error' && state.extractionError) {
-    const failedPage = state.extractionError.page;
+  if (state.isTextless) {
     return (
       <Screen gutter={false} style={{ backgroundColor: theme.background }}>
         <View style={styles.centered}>
-          <ErrorState
-            message={state.extractionError.message}
-            onRetry={() => void refreshPage(failedPage)}
+          <CenteredNotice
+            title="No extractable text"
+            message={
+              'This PDF appears to be scanned or contains only images, so there is no text to ' +
+              'reflow. Switch to PDF mode to read the original pages.'
+            }
           />
         </View>
       </Screen>
@@ -318,22 +407,19 @@ export function ReflowReader({
   return (
     <Screen gutter={false} style={{ backgroundColor: theme.background, flex: 1 }}>
       <FlatList
-        ref={flatListRef}
+        ref={listRef}
         data={state.blocks}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ListFooterComponent={listFooter}
-        onScroll={handleScroll}
         onViewableItemsChanged={onViewableItemsChanged}
         onScrollToIndexFailed={onScrollToIndexFailed}
-        scrollEventThrottle={16}
         contentContainerStyle={contentContainerStyle}
         showsVerticalScrollIndicator
-        // Virtualization: text rows are light, so a small window keeps memory
-        // low while staying ahead of the scroll. removeClippedSubviews detaches
-        // offscreen rows from the native view tree on Android.
+        // Virtualization: text rows are light, so a modest window keeps memory flat
+        // while staying ahead of the scroll. removeClippedSubviews detaches offscreen
+        // rows from the native view tree on Android.
         removeClippedSubviews
-        initialNumToRender={12}
+        initialNumToRender={10}
         maxToRenderPerBatch={8}
         updateCellsBatchingPeriod={50}
         windowSize={7}
@@ -349,85 +435,75 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  centeredPadded: {
-    padding: 24,
-  },
-  content: {
-    paddingTop: 24,
-    paddingBottom: 48,
-    // Percentage padding keeps the measure comfortable at any width without
-    // assuming a device size.
-    paddingHorizontal: '5%',
-    // Centres the column when maxWidth caps it on wide screens.
-    alignSelf: 'center',
-    width: '100%',
-  },
   listRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
   bullet: {
     marginRight: 8,
-    marginTop: 2,
-    marginLeft: 0,
   },
   listText: {
+    // flex lets the text wrap inside the row instead of overflowing it.
     flex: 1,
-    marginLeft: 0,
   },
-  footer: {
-    height: 48,
-  },
-  loadingContainer: {
+  imageWrap: {
     alignItems: 'center',
+    marginVertical: 16,
+  },
+  imageFallback: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    borderStyle: 'dashed',
     paddingVertical: 24,
+    alignItems: 'center',
+    marginVertical: 16,
   },
-  loadingText: {
+  imageFallbackText: {
+    fontSize: 13,
+  },
+  generatingTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  generatingDetail: {
     fontSize: 14,
-    marginTop: 8,
+    marginTop: 6,
   },
-  errorContainer: {
+  generatingNote: {
+    fontSize: 13,
+    marginTop: 16,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  notice: {
     alignItems: 'center',
     padding: 24,
     borderRadius: 12,
-    marginHorizontal: 24,
-    marginTop: 24,
+    maxWidth: 420,
   },
-  errorTitle: {
+  noticeTitle: {
     fontSize: 18,
     fontWeight: '600',
-  },
-  errorMessage: {
-    fontSize: 14,
-    marginTop: 8,
-    marginBottom: 16,
     textAlign: 'center',
   },
-  errorButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  errorButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  textlessContainer: {
-    alignItems: 'center',
-    padding: 24,
-    borderRadius: 12,
-    marginHorizontal: 24,
-    marginTop: 24,
-  },
-  textlessTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  textlessMessage: {
+  noticeMessage: {
     fontSize: 14,
     marginTop: 8,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  noticeButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  noticeButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

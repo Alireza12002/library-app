@@ -3,7 +3,7 @@ import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
-import { Button, EmptyState, Screen, Text } from '@/components/ui';
+import { Button, EmptyState, IconButton, Screen, Text } from '@/components/ui';
 import type { BookSummary } from '@/core/entities/book';
 import { BookCard } from '@/features/library/components';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
@@ -45,6 +45,10 @@ export default function LibraryScreen() {
     router.push(`/reader/${bookId}`);
   }, []);
 
+  const openSettings = useCallback(() => {
+    router.push('/settings');
+  }, []);
+
   // Stable renderItem: an inline arrow here would give every BookCard new
   // callbacks on each list render, defeating BookCard's memo.
   const renderBookCard = useCallback(
@@ -77,8 +81,15 @@ export default function LibraryScreen() {
   return (
     <Screen gutter={false}>
       <View style={[styles.headerWrapper, { paddingHorizontal: grid.horizontalPadding }]}>
-        <View style={{ paddingTop: insets.top + spacing.lg }}>
+        <View style={[styles.titleRow, { paddingTop: insets.top + spacing.lg }]}>
           <Text variant="displayLarge">My Library</Text>
+          <IconButton
+            name="settings-outline"
+            accessibilityLabel="Settings"
+            size={22}
+            tone="muted"
+            onPress={openSettings}
+          />
         </View>
 
         {error ? (
@@ -150,6 +161,11 @@ const styles = StyleSheet.create({
   headerWrapper: {
     // Header, error banner and Add button stay put; only the grid scrolls.
     alignSelf: 'stretch',
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   errorBanner: {
     padding: 12,

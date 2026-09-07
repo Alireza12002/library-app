@@ -1,10 +1,15 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState, useMemo, useCallback, useEffect, useRef, memo } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, Icon, IconButton, Screen, Text } from '@/components/ui';
-import { ReaderControls, SettingsSheet, ReflowReader } from '@/features/reader/components';
+import {
+  JumpToPageSheet,
+  ReaderControls,
+  ReflowReader,
+  SettingsSheet,
+} from '@/features/reader/components';
 import { useReader } from '@/features/reader/hooks/useReader';
 import { useReflowReader } from '@/features/reader/hooks/useReflowReader';
 import { useBookmarks } from '@/features/reader/hooks/useBookmarks';
@@ -45,6 +50,8 @@ export default function ReaderScreen() {
   const reader = useReader(bookId, 0); // initialPageIndex ignored; useReader restores from progress
   const engine = getPdfEngine();
   const insets = useSafeAreaInsets();
+  // Window height caps sheet growth; measured, so it follows rotation.
+  const { height: windowHeight } = useWindowDimensions();
 
   const bookmarks = useBookmarks(reader.book?.id ?? null, reader.currentPage);
   const { settings, updateSettings, capabilities } = useReaderSettings();
@@ -58,12 +65,19 @@ export default function ReaderScreen() {
   const [showBookmarks, setShowBookmarks] = useState(false);
   // Settings sheet visibility.
   const [showSettings, setShowSettings] = useState(false);
+  // Jump-to-page sheet visibility.
+  const [showJumpToPage, setShowJumpToPage] = useState(false);
 
   // Reflow reader hook — inert unless reflow mode is actually showing. The hook
-  // is always CALLED (Rules of Hooks); `enabled=false` short-circuits its
-  // extraction effects so PDF mode pays nothing for it.
+  // is always CALLED (Rules of Hooks); `enabled=false` short-circuits its load
+  // effect so PDF mode pays nothing for it.
+  //
+  // `reader.currentPage` is the ENTRY page: on the transition into reflow, the hook
+  // maps it through the document's page index to the block that page's content
+  // starts at. It reads the value via a ref, so page turns in PDF mode do not
+  // re-run the load.
   const reflowEnabled = mode === 'reflow' && reader.book !== null;
-  const reflow = useReflowReader(reader.book ?? null, reflowEnabled);
+  const reflow = useReflowReader(reader.book ?? null, reflowEnabled, reader.currentPage);
 
   // Update settings when mode changes (but not during initial sync)
   const initializedRef = useRef(false);
@@ -89,36 +103,36 @@ export default function ReaderScreen() {
     pageCountRef.current = reader.pageCount;
   }, [reader.currentPage, reader.pageCount]);
 
-  const { controllerBox } = reader;
+  const { setPage } = reader;
 
   const goPrev = useCallback(() => {
     if (mode === 'reflow') return; // reflow has no discrete pages
     const page = currentPageRef.current;
     if (page <= 0) return;
-    controllerBox.current?.setPage(page - 1);
-  }, [mode, controllerBox]);
+    setPage(page - 1);
+  }, [mode, setPage]);
 
   const goNext = useCallback(() => {
     if (mode === 'reflow') return;
     const page = currentPageRef.current;
     const count = pageCountRef.current;
     if (count === null || page >= count - 1) return;
-    controllerBox.current?.setPage(page + 1);
-  }, [mode, controllerBox]);
+    setPage(page + 1);
+  }, [mode, setPage]);
 
   const handleJumpToBookmark = useCallback(
     (bookmarkId: string) => {
       const pageIndex = bookmarks.jumpToBookmark(bookmarkId);
       if (pageIndex === null) return;
       if (mode === 'reflow') {
-        // Reflow has no page anchors yet; switch to PDF mode to honour the jump.
+        // Bookmarks are anchored to PDF pages, so honour the jump in PDF mode.
         setMode('pdf');
         updateSettings({ mode: 'pdf' });
       }
-      controllerBox.current?.setPage(pageIndex);
+      setPage(pageIndex);
       setShowBookmarks(false);
     },
-    [bookmarks, mode, updateSettings, controllerBox],
+    [bookmarks, mode, updateSettings, setPage],
   );
 
   const handleToggleBookmark = useCallback(async () => {
@@ -126,16 +140,59 @@ export default function ReaderScreen() {
   }, [bookmarks]);
 
   const handleJumpToPage = useCallback(() => {
-    // TODO: Implement jump-to-page modal in a future update.
+    setShowJumpToPage(true);
   }, []);
+
+  /**
+   * Navigates to a page chosen in the jump sheet.
+   *
+   * Validation and clamping live in useReader.setPage, which issues a native
+   * command rather than changing a prop — so the document is not reopened or
+   * re-rasterized. `currentPage` updates when the renderer reports the move back
+   * through onPageChange, keeping one source of truth.
+   *
+   * In reflow mode the jump switches to PDF mode: page numbers refer to original
+   * PDF pages, and that is where a page jump is meaningful.
+   */
+  const jumpToPage = useCallback(
+    (pageIndex: number) => {
+      if (mode === 'reflow') {
+        setMode('pdf');
+        updateSettings({ mode: 'pdf' });
+      }
+      setPage(pageIndex);
+    },
+    [mode, updateSettings, setPage],
+  );
+
+  const closeJumpToPage = useCallback(() => setShowJumpToPage(false), []);
+
+  /**
+   * Switches reading mode, carrying the reading position across.
+   *
+   * PDF → reflow: nothing to do here. `reader.currentPage` is passed to
+   * useReflowReader as the entry page, and the hook resolves it to a block index
+   * through the document's page map.
+   *
+   * Reflow → PDF: ask the reflow hook which PDF page the current position belongs
+   * to (read from the visible block's own `pageIndex`, not estimated) and command
+   * the renderer to that page. `setPage` is a native command, so the document is
+   * not reopened.
+   */
+  const { getCurrentPdfPage } = reflow;
 
   const handleToggleMode = useCallback(() => {
     setMode((current) => {
-      const next = current === 'pdf' ? 'reflow' : 'pdf';
-      updateSettings({ mode: next });
-      return next;
+      if (current === 'reflow') {
+        const page = getCurrentPdfPage();
+        if (page !== null) setPage(page);
+        updateSettings({ mode: 'pdf' });
+        return 'pdf';
+      }
+      updateSettings({ mode: 'reflow' });
+      return 'reflow';
     });
-  }, [updateSettings]);
+  }, [getCurrentPdfPage, setPage, updateSettings]);
 
   const openSettings = useCallback(() => setShowSettings(true), []);
   const closeSettings = useCallback(() => setShowSettings(false), []);
@@ -148,11 +205,6 @@ export default function ReaderScreen() {
   // Reader surface colours. Memoized so the object identity only moves when the
   // chosen theme does — it feeds the memoized header options below.
   const readerTheme = READER_THEMES[settings.theme];
-
-  const handleReflowScroll = useCallback(() => {
-    // ReflowReader owns viewport tracking; the screen needs no per-scroll work.
-    // Kept as a stable no-op so the prop identity never changes.
-  }, []);
 
   /** User-facing copy per normalized renderer error code. */
   const renderFailureState = () => {
@@ -271,7 +323,7 @@ export default function ReaderScreen() {
   // renderer cares about; `initialPage` is frozen at resolve time so ordinary
   // page turns never reach the native prop layer.
   const initialPage = reader.initialPage;
-  const { onLoaded, onPageChanged, onError } = reader;
+  const { controllerBox, onLoaded, onPageChanged, onError } = reader;
   const canJumpOnOpen = engine.capabilities.jumpToInitialPage;
 
   const engineProps = useMemo<PdfEngineViewProps | null>(() => {
@@ -332,15 +384,13 @@ export default function ReaderScreen() {
         ) : reader.book ? (
           <View style={styles.flex}>
             {mode === 'reflow' ? (
-              // Reflow mode - continuous text
+              // Reflow mode: the whole-book document, reflowed to the device width.
               <ReflowReader
                 state={reflow.state}
                 settings={settings}
-                ensurePagesLoaded={reflow.ensurePagesLoaded}
-                refreshPage={reflow.refreshPage}
-                onScroll={handleReflowScroll}
-                updateReadingPosition={reflow.updateReadingPosition}
-                restoreReadingPosition={reflow.restoreReadingPosition}
+                onVisibleBlockChange={reflow.reportVisibleBlock}
+                onScrollTargetConsumed={reflow.consumeScrollTarget}
+                onRegenerate={reflow.regenerate}
               />
             ) : (
               // PDF mode - page-based rendering
@@ -385,6 +435,17 @@ export default function ReaderScreen() {
                 onUpdate={updateSettings}
                 onClose={closeSettings}
                 onReset={closeSettings}
+              />
+            )}
+
+            {showJumpToPage && (
+              <JumpToPageSheet
+                currentPage={reader.currentPage}
+                pageCount={reader.pageCount}
+                bottomInset={insets.bottom}
+                availableHeight={windowHeight}
+                onJump={jumpToPage}
+                onClose={closeJumpToPage}
               />
             )}
           </View>

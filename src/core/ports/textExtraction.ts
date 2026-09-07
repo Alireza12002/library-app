@@ -15,6 +15,8 @@ export interface TextExtractionSource {
 export interface TextExtractionCapabilities {
   /** Can the engine extract text from pages? */
   extractText: boolean;
+  /** Can the engine recover embedded bitmaps for inline display? */
+  extractImages?: boolean;
   /** Maximum pages that can be extracted in one batch (for performance). */
   maxBatchPages?: number;
 }
@@ -24,6 +26,27 @@ export interface ExtractedPageText {
   pageIndex: number;
   /** Raw text as extracted from the page */
   text: string;
+  /**
+   * Images found on the page, in reading order relative to the text.
+   *
+   * Present only when the engine supports image extraction. Each entry carries a
+   * `marker` that appears on its own line in `text` at the position the image
+   * occupies, so the parser can place the image between the right paragraphs
+   * without needing coordinates above the port.
+   */
+  images?: ExtractedPageImage[];
+}
+
+/** A bitmap recovered from a page, already written to a displayable file. */
+export interface ExtractedPageImage {
+  /** Sentinel line in the page text marking this image's reading position. */
+  marker: string;
+  /** file:// URI of the extracted bitmap. */
+  uri: string;
+  /** Intrinsic pixel width. */
+  width: number;
+  /** Intrinsic pixel height. */
+  height: number;
 }
 
 export interface ExtractedPageRange {

@@ -85,7 +85,7 @@ export const ReaderControls = memo(function ReaderControls({
         />
       </View>
 
-      <View style={styles.centerGroup}>
+      {/* <View style={styles.centerGroup}> */}
         <IconButton
           name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
           accessibilityLabel={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}
@@ -100,7 +100,7 @@ export const ReaderControls = memo(function ReaderControls({
           tone="accent"
           onPress={onJumpToPage}
         />
-      </View>
+      {/* </View> */}
 
       <View style={styles.rightGroup}>
         <IconButton
@@ -110,13 +110,6 @@ export const ReaderControls = memo(function ReaderControls({
           tone="accent"
           onPress={onToggleLayout}
         />
-        <IconButton
-          name="cog-outline"
-          accessibilityLabel="Settings"
-          size={24}
-          tone="accent"
-          onPress={onSettings}
-        />
       </View>
     </View>
   );
@@ -124,10 +117,11 @@ export const ReaderControls = memo(function ReaderControls({
 
 const styles = StyleSheet.create({
   container: {
+  //  display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    justifyContent: 'space-around',
+    paddingHorizontal:0,
     paddingTop: 8,
     // No fixed `height`: the row must be able to grow by the bottom inset on
     // devices that have one, instead of clipping its own controls.
@@ -136,21 +130,22 @@ const styles = StyleSheet.create({
   leftGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    flex: 1,
+    gap: 0,
+   // flex: 1,
+    justifyContent: 'space-between'
   },
   centerGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 0,
     justifyContent: 'center',
   },
   rightGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    flex: 1,
-    justifyContent: 'flex-end',
+    gap: 0,
+  //  flex: 1,
+    justifyContent: 'center',
   },
   pageInfo: {
     flexDirection: 'row',
