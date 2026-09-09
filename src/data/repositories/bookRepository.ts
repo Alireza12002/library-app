@@ -9,13 +9,14 @@
  * - Page numbers are 0-based.
  */
 import type { Book, BookMetadataPatch, BookSort, BookSummary, NewBook } from '@/core/entities/book';
+import type { ReflowPosition } from '@/core/entities/reflowDocument';
 import { DomainError } from '@/core/errors';
 import { newId } from '@/core/ids';
 import type { DatabaseConnection } from '@/data/db/connection';
 import { toBook, toBookSummary, type BookRow } from './mappers';
 
 const COLUMNS =
-  'id, title, author, file_uri, file_name, file_size, page_count, last_page, created_at, updated_at, last_opened_at';
+  'id, title, author, file_uri, file_name, file_size, page_count, last_page, reflow_block_index, reflow_page_index, created_at, updated_at, last_opened_at';
 
 const ORDER_BY: Record<BookSort, string> = {
   // Most recently opened first; never-opened books fall to the back, newest import first.
@@ -30,6 +31,11 @@ export interface BookRepository {
   list(sort?: BookSort): Promise<BookSummary[]>;
   updateMetadata(id: string, patch: BookMetadataPatch, now?: Date): Promise<Book>;
   updateProgress(id: string, lastPage: number, now?: Date): Promise<Book>;
+  /**
+   * Persists the book's Reflow reading position WITHOUT touching `last_page` —
+   * the two modes' positions are independent. Null clears the position.
+   */
+  updateReflowPosition(id: string, position: ReflowPosition | null, now?: Date): Promise<Book>;
   /** Stamps lastOpenedAt/updatedAt without touching the page position. */
   markOpened(id: string, now?: Date): Promise<Book>;
   remove(id: string): Promise<boolean>;
@@ -54,7 +60,7 @@ export function createBookRepository(db: DatabaseConnection): BookRepository {
       const timestamp = now.getTime();
 
       await db.runAsync(
-        `INSERT INTO books (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)`,
+        `INSERT INTO books (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?, NULL)`,
         [
           id,
           input.title,
@@ -128,6 +134,31 @@ export function createBookRepository(db: DatabaseConnection): BookRepository {
       const result = await db.runAsync(
         'UPDATE books SET last_page = ?, last_opened_at = ?, updated_at = ? WHERE id = ?',
         [lastPage, timestamp, timestamp, id],
+      );
+      if (result.changes === 0) {
+        throw new DomainError('book_not_found', `No book with id ${id}`);
+      }
+
+      return requireById(id);
+    },
+
+    async updateReflowPosition(id, position, now = new Date()) {
+      if (position !== null) {
+        const valid = (value: number) => Number.isInteger(value) && value >= 0;
+        if (!valid(position.blockIndex) || !valid(position.pageIndex)) {
+          throw new DomainError(
+            'unknown',
+            `reflow position must be non-negative integers, received ${position.blockIndex}/${position.pageIndex}`,
+          );
+        }
+      }
+
+      const timestamp = now.getTime();
+      const blockIndex = position === null ? null : position.blockIndex;
+      const pageIndex = position === null ? null : position.pageIndex;
+      const result = await db.runAsync(
+        `UPDATE books SET reflow_block_index = ?, reflow_page_index = ?, last_opened_at = ?, updated_at = ? WHERE id = ?`,
+        [blockIndex, pageIndex, timestamp, timestamp, id],
       );
       if (result.changes === 0) {
         throw new DomainError('book_not_found', `No book with id ${id}`);

@@ -182,6 +182,46 @@ export function blockIndexToPdfPage(document: ReflowDocument, blockIndex: number
   return blocks[clamped]!.pageIndex;
 }
 
+/**
+ * Restores a persisted Reflow position against the current document.
+ *
+ * The saved position is a pair (blockIndex, pageIndex). It is trusted only when
+ * the block it names still exists AND still belongs to the page it was saved
+ * with — otherwise the document was regenerated or the file replaced, and the
+ * page anchor is re-resolved semantically instead of crashing or landing on the
+ * wrong content. Returns null when nothing was saved.
+ */
+export function resolveSavedReflowPosition(
+  document: ReflowDocument,
+  saved: ReflowPosition | null | undefined,
+): number | null {
+  if (!saved) return null;
+
+  const { blockIndex, pageIndex } = saved;
+  if (!Number.isInteger(blockIndex) || blockIndex < 0) {
+    // Corrupt block index with a usable page anchor: degrade to the page.
+    if (Number.isInteger(pageIndex) && pageIndex >= 0) {
+      return pdfPageToBlockIndex(document, pageIndex);
+    }
+    return null;
+  }
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) return null;
+
+  // The block no longer exists (the document shrank on regeneration): fall back
+  // to the page anchor, which pdfPageToBlockIndex clamps into range.
+  if (blockIndex >= document.blocks.length) {
+    return pdfPageToBlockIndex(document, pageIndex);
+  }
+
+  // The block exists but the extractor now assigns it to a different page: the
+  // block structure changed, so trust the page anchor rather than the index.
+  if (document.blocks[blockIndex]!.pageIndex !== pageIndex) {
+    return pdfPageToBlockIndex(document, pageIndex);
+  }
+
+  return blockIndex;
+}
+
 /** Blocks belonging to one PDF page, as a half-open [start, end) range. */
 export function blockRangeForPdfPage(
   document: ReflowDocument,

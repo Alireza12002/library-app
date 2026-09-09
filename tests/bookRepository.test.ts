@@ -166,6 +166,60 @@ test('updateProgress on a missing book raises book_not_found', async () => {
   );
 });
 
+test('updateReflowPosition stores the position without touching lastPage', async () => {
+  const created = await books.create(sample());
+  await books.updateProgress(created.id, 90, new Date('2026-03-01T00:00:00.000Z'));
+
+  const updated = await books.updateReflowPosition(
+    created.id,
+    { blockIndex: 412, pageIndex: 99 },
+    new Date('2026-03-02T00:00:00.000Z'),
+  );
+
+  // Reflow position saved...
+  assert.equal(updated.reflowBlockIndex, 412);
+  assert.equal(updated.reflowPageIndex, 99);
+  // ...while the PDF page stays exactly where PDF mode left it.
+  assert.equal(updated.lastPage, 90, 'reflow position must not overwrite the PDF page');
+  assert.deepEqual(updated.lastOpenedAt, new Date('2026-03-02T00:00:00.000Z'));
+});
+
+test('updateProgress does not touch the reflow position', async () => {
+  const created = await books.create(sample());
+  await books.updateReflowPosition(created.id, { blockIndex: 7, pageIndex: 2 });
+
+  const updated = await books.updateProgress(created.id, 120);
+
+  assert.equal(updated.lastPage, 120);
+  assert.equal(updated.reflowBlockIndex, 7, 'PDF progress must not overwrite the reflow position');
+  assert.equal(updated.reflowPageIndex, 2);
+});
+
+test('updateReflowPosition can clear the position and rejects invalid values', async () => {
+  const created = await books.create(sample());
+  await books.updateReflowPosition(created.id, { blockIndex: 7, pageIndex: 2 });
+
+  const cleared = await books.updateReflowPosition(created.id, null);
+  assert.equal(cleared.reflowBlockIndex, null);
+  assert.equal(cleared.reflowPageIndex, null);
+
+  await assert.rejects(
+    () => books.updateReflowPosition(created.id, { blockIndex: -1, pageIndex: 0 }),
+    DomainError,
+  );
+  await assert.rejects(
+    () => books.updateReflowPosition(created.id, { blockIndex: 1.5, pageIndex: 0 }),
+    DomainError,
+  );
+});
+
+test('updateReflowPosition on a missing book raises book_not_found', async () => {
+  await assert.rejects(
+    () => books.updateReflowPosition('missing', { blockIndex: 0, pageIndex: 0 }),
+    (error: unknown) => error instanceof DomainError && error.code === 'book_not_found',
+  );
+});
+
 test('remove reports whether a row was deleted', async () => {
   const created = await books.create(sample());
   assert.equal(await books.remove(created.id), true);

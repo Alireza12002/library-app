@@ -17,6 +17,8 @@ export interface BookRow {
   file_size: number;
   page_count: number | null;
   last_page: number;
+  reflow_block_index: number | null;
+  reflow_page_index: number | null;
   created_at: number;
   updated_at: number;
   last_opened_at: number | null;
@@ -41,6 +43,8 @@ export function toBook(row: BookRow): Book {
     fileSize: row.file_size,
     pageCount: row.page_count,
     lastPage: row.last_page,
+    reflowBlockIndex: row.reflow_block_index,
+    reflowPageIndex: row.reflow_page_index,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
     lastOpenedAt: row.last_opened_at === null ? null : new Date(row.last_opened_at),

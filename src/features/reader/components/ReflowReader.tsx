@@ -11,10 +11,14 @@
  *
  * POSITION
  * --------
- * The document arrives whole, so entering at a given PDF page is a `scrollToIndex`
- * onto a real block (the index comes from the document's page map). While scrolling,
- * the topmost visible block is reported back so the screen can map the position to a
- * PDF page when the user switches modes.
+ * The document arrives whole, so entering at a given PDF page is a matter of the
+ * block index resolved from the document's page map. That index is handed to
+ * FlatList as `initialScrollIndex`: the virtualized list renders its FIRST window
+ * at the target block — blocks before it are never rendered — and after layout
+ * performs one internal, non-animated scroll onto the exact offset. The reader
+ * therefore appears directly at the target position with no visible scroll journey.
+ * While scrolling, the topmost visible block is reported back so the screen can
+ * map the position to a PDF page when the user switches modes.
  *
  * PERFORMANCE
  * -----------
@@ -36,7 +40,7 @@ import {
   type TextStyle,
   type ViewToken,
 } from 'react-native';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 
 import { Screen } from '@/components/ui';
 import { useTheme, READER_THEMES, type ReaderThemeTokens } from '@/theme';
@@ -50,8 +54,6 @@ interface ReflowReaderProps {
   settings: ReadingSettings;
   /** Reports the topmost visible block so position can be mapped to a PDF page. */
   onVisibleBlockChange: (blockIndex: number) => void;
-  /** Called once the pending entry scroll has been performed. */
-  onScrollTargetConsumed: () => void;
   /** Discards the stored document and processes the book again. */
   onRegenerate: () => void;
 }
@@ -265,7 +267,6 @@ export function ReflowReader({
   state,
   settings,
   onVisibleBlockChange,
-  onScrollTargetConsumed,
   onRegenerate,
 }: ReflowReaderProps) {
   const theme = useMemo(() => READER_THEMES[settings.theme], [settings.theme]);
@@ -283,22 +284,6 @@ export function ReflowReader({
   );
 
   const listRef = useRef<FlatList<TextBlock> | null>(null);
-
-  /**
-   * Scrolls to the entry position once the list has content.
-   *
-   * This is what preserves the reading position across a mode switch: the target
-   * block index was computed from the PDF page the user was on.
-   */
-  const { scrollToBlock, blocks } = state;
-  useEffect(() => {
-    if (scrollToBlock === null) return;
-    if (blocks.length === 0) return;
-
-    const index = Math.max(0, Math.min(scrollToBlock, blocks.length - 1));
-    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
-    onScrollTargetConsumed();
-  }, [scrollToBlock, blocks.length, onScrollTargetConsumed]);
 
   /** Reports the topmost visible row so the position can map back to a PDF page. */
   const onViewableItemsChanged = useCallback(
@@ -404,6 +389,21 @@ export function ReflowReader({
     );
   }
 
+  // An activation resolves its open-at block BEFORE the list may mount. Holding
+  // the spinner here keeps the FlatList from ever mounting at the top of the book
+  // and then scrolling — the visible journey `initialScrollIndex` replaces. The
+  // window is one commit wide: the hook publishes the target synchronously with
+  // readiness, or in the re-entry fast path immediately on activation.
+  if (state.initialBlockIndex === null) {
+    return (
+      <Screen gutter={false} style={{ backgroundColor: theme.background }}>
+        <View style={styles.centered}>
+          <ActivityIndicator color={theme.accent} size="large" />
+        </View>
+      </Screen>
+    );
+  }
+
   return (
     <Screen gutter={false} style={{ backgroundColor: theme.background, flex: 1 }}>
       <FlatList
@@ -411,6 +411,11 @@ export function ReflowReader({
         data={state.blocks}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
+        // Direct open: the virtualized list renders its first window AT this
+        // block (blocks before it are never rendered) and lands on the exact
+        // offset with one internal non-animated scroll after layout. Only read
+        // at mount, which is exactly when the hook publishes a fresh target.
+        initialScrollIndex={state.initialBlockIndex}
         onViewableItemsChanged={onViewableItemsChanged}
         onScrollToIndexFailed={onScrollToIndexFailed}
         contentContainerStyle={contentContainerStyle}

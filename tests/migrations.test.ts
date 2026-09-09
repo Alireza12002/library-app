@@ -78,6 +78,28 @@ test('migration 001 seeds exactly one reading_settings row', async () => {
   }
 });
 
+test('migration 005 adds nullable reflow position columns to books', async () => {
+  const db = await createTestDatabase();
+  try {
+    const columns = await db.connection.getAllAsync<{ name: string }>(
+      "PRAGMA table_info(books)",
+      [],
+    );
+    const names = columns.map((c) => c.name);
+    assert.ok(names.includes('reflow_block_index'), 'missing reflow_block_index');
+    assert.ok(names.includes('reflow_page_index'), 'missing reflow_page_index');
+
+    // Nullable: existing rows keep their PDF progress untouched.
+    const row = await db.connection.getFirstAsync<{
+      reflow_block_index: number | null;
+      reflow_page_index: number | null;
+    }>('SELECT reflow_block_index, reflow_page_index FROM books LIMIT 1', []);
+    assert.equal(row, null, 'books table starts empty, but the query must not fail');
+  } finally {
+    db.close();
+  }
+});
+
 test('a failing migration rolls back and leaves the version untouched', async () => {
   const raw = new DatabaseSync(':memory:');
   const connection = wrapConnection(raw);

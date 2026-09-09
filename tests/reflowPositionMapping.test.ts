@@ -19,6 +19,7 @@ import {
   isReflowDocumentUsable,
   pdfPageToBlockIndex,
   reflowSourceFingerprint,
+  resolveSavedReflowPosition,
   REFLOW_FORMAT_VERSION,
   type ReflowDocument,
   type TextBlock,
@@ -301,5 +302,52 @@ describe('extractedPageCount', () => {
 
   test('is zero for an empty document', () => {
     assert.equal(extractedPageCount(makeDocument([0, 0])), 0);
+  });
+});
+
+describe('resolveSavedReflowPosition', () => {
+  test('returns null when nothing was saved', () => {
+    const document = makeDocument([2, 3, 1]);
+    assert.equal(resolveSavedReflowPosition(document, null), null);
+    assert.equal(resolveSavedReflowPosition(document, undefined), null);
+  });
+
+  test('restores a still-valid block index verbatim', () => {
+    // Document [2, 3, 1]: blocks 0-1 are page 0, 2-4 page 1, 5 page 2.
+    const document = makeDocument([2, 3, 1]);
+    assert.equal(resolveSavedReflowPosition(document, { blockIndex: 4, pageIndex: 1 }), 4);
+    assert.equal(resolveSavedReflowPosition(document, { blockIndex: 5, pageIndex: 2 }), 5);
+    assert.equal(resolveSavedReflowPosition(document, { blockIndex: 0, pageIndex: 0 }), 0);
+  });
+
+  test('re-resolves from the page anchor when the block is gone', () => {
+    // The document was regenerated and shrank below the saved block index.
+    const shrunk = makeDocument([2, 3]);
+    // Page 2 no longer exists: pdfPageToBlockIndex falls back to the last
+    // content page's first block rather than crashing or resetting to 0.
+    assert.equal(resolveSavedReflowPosition(shrunk, { blockIndex: 9, pageIndex: 2 }), 2);
+    // Page 1 still exists and still starts at block 2.
+    assert.equal(resolveSavedReflowPosition(shrunk, { blockIndex: 9, pageIndex: 1 }), 2);
+  });
+
+  test('re-resolves from the page anchor when the block moved', () => {
+    // The regenerated document distributes blocks differently.
+    const shifted = makeDocument([3, 2, 1]);
+    // Block 0 exists but now belongs to page 0, not the saved page 2 — trust
+    // the semantic page anchor, not the raw index.
+    assert.equal(resolveSavedReflowPosition(shifted, { blockIndex: 0, pageIndex: 2 }), 5);
+  });
+
+  test('degrades to the page anchor or null on malformed saved values', () => {
+    // Casts simulate corrupt rows; restore must never crash the reader.
+    const document = makeDocument([2, 3, 1]);
+    assert.equal(
+      resolveSavedReflowPosition(document, { blockIndex: -1, pageIndex: 1 } as never),
+      2,
+    );
+    assert.equal(
+      resolveSavedReflowPosition(document, { blockIndex: 1, pageIndex: 1.5 } as never),
+      null,
+    );
   });
 });

@@ -25,6 +25,8 @@ function makeBook(input: NewBook): Book {
     fileSize: input.fileSize,
     pageCount: null,
     lastPage: 0,
+    reflowBlockIndex: null,
+    reflowPageIndex: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     lastOpenedAt: null,

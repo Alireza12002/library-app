@@ -7,7 +7,9 @@ const expoConfig = require('eslint-config-expo/flat');
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*', 'node_modules/*', '.expo/*'],
+    // .hermes holds agent-skill assets (docs/templates), some of which are not
+    // even TypeScript despite the extension — not app code, never bundled.
+    ignores: ['dist/*', 'node_modules/*', '.expo/*', '.hermes/*'],
   },
   // --- project-specific: architecture guardrails -------------------------
   {

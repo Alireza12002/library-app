@@ -48,6 +48,8 @@ function makeBook(overrides: Partial<Book> = {}): Book {
     fileSize: 1234,
     pageCount: null,
     lastPage: 0,
+    reflowBlockIndex: null,
+    reflowPageIndex: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     lastOpenedAt: null,

@@ -197,6 +197,8 @@ Book              { id: string(uuid); title: string;
                     fileSize: number;
                     pageCount: number | null; // unknown until the reader reports it
                     lastPage: number;         // 0-based, defaults to 0
+                    reflowBlockIndex: number | null; // Reflow position, independent
+                    reflowPageIndex: number | null;  // source page of that block
                     createdAt: Date; updatedAt: Date;
                     lastOpenedAt: Date | null } // null until first opened
 Bookmark          { id: string(uuid); bookId: string;
@@ -209,6 +211,8 @@ ReadingSettings   { id: 'default';          // single-row table
                     fontFamily: string; fontSizePt: number;
                     lineHeight: number; invertPages: boolean }
 ExtractedPage?    { id; bookId; pageIndex; text; extractedAt }  // cache table, Phase 7
+ReflowPosition    { blockIndex: number;     // index into the book's reflow blocks
+                    pageIndex: number }     // source PDF page of that block
 ```
 
 ```sql
@@ -256,6 +260,8 @@ INSERT INTO reading_settings (id) VALUES ('default');
 Rules: timestamps as unix-ms integers; **page numbers are 0-based everywhere** (matching the PDF engine's `onPageChange`, so UI adds 1 when displaying); all writes through repositories; migrations forward-only, never edited once shipped.
 
 Reading progress lives on `books` (`last_page`, `last_opened_at`) rather than in a separate 1:1 table — one row per book, one write per page turn.
+
+**Reflow position is persisted independently of the PDF page** (migration 005: nullable `reflow_block_index` + `reflow_page_index` on `books`). The pair is semantic: the block index pins the exact spot, the source page lets a stale index be re-resolved after the document is regenerated (`resolveSavedReflowPosition`). Each mode writes only its own column set — PDF progress never touches the reflow columns and vice versa. Reflow writes are throttled to at most one per `REFLOW_PROGRESS_MIN_INTERVAL_MS` while scrolling, with flushes on background/leaving-reflow/unmount. On restore, a saved Reflow position wins only when the session opened straight into Reflow mode; an in-session toggle maps the current PDF page through `pageStarts` instead. Opening at the resolved block is direct: the index feeds FlatList's `initialScrollIndex`, so the virtualized list renders its first window at the target — no mount-at-top-then-scroll.
 
 ### Schema versioning
 

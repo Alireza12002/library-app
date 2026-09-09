@@ -32,6 +32,8 @@ const DEFAULT_BOOK: Book = {
   fileSize: 2048,
   pageCount: 10,
   lastPage: 3,
+  reflowBlockIndex: null,
+  reflowPageIndex: null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-02T00:00:00.000Z'),
   lastOpenedAt: new Date('2026-01-02T00:00:00.000Z'),

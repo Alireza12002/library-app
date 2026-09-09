@@ -30,6 +30,16 @@ export interface Book {
   pageCount: number | null;
   /** 0-based index of the last page the reader was on. */
   lastPage: number;
+  /**
+   * The book's persisted Reflow reading position, kept INDEPENDENT of `lastPage`
+   * (which is the PDF mode's position). Null until the user has read in Reflow.
+   *
+   * `reflowBlockIndex` is an index into the book's reflow document blocks;
+   * `reflowPageIndex` is the source PDF page that block came from, so the
+   * position can be re-resolved semantically if the document is regenerated.
+   */
+  reflowBlockIndex: number | null;
+  reflowPageIndex: number | null;
   createdAt: Date;
   updatedAt: Date;
   /** Null until the book is opened for the first time. */

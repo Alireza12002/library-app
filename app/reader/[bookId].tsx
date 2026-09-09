@@ -56,9 +56,29 @@ export default function ReaderScreen() {
   const bookmarks = useBookmarks(reader.book?.id ?? null, reader.currentPage);
   const { settings, updateSettings, capabilities } = useReaderSettings();
 
-  // Reading mode: pdf (page-based) ↔ reflow (continuous text)
-  // Initialize from settings to avoid sync effect
+  // Reading mode: pdf (page-based) ↔ reflow (continuous text).
+  // Initialized from settings when they are already loaded; the adjustment below
+  // adopts the persisted mode once AsyncStorage resolves.
   const [mode, setMode] = useState<'pdf' | 'reflow'>(() => settings.mode ?? 'pdf');
+  // True once the user has switched modes in this session. It gates BOTH the
+  // mode adoption below and the reflow position restore: after a deliberate
+  // in-session toggle, entering reflow must follow the CURRENT PDF page (the
+  // user navigated somewhere on purpose); only a session restore that opens
+  // straight into reflow resumes the persisted Reflow position.
+  const [userToggledMode, setUserToggledMode] = useState(false);
+  // The persisted mode as of the last render — React's "adjust state when a prop
+  // changes" pattern. The reader can mount before AsyncStorage resolves, so
+  // `mode` may have started from the defaults; when the real settings arrive,
+  // adopt the persisted mode unless the user has already chosen a mode here.
+  // Every local mode change persists immediately through updateSettings in the
+  // toggle/jump handlers, so settings.mode never fights local state afterwards.
+  const [persistedMode, setPersistedMode] = useState<'pdf' | 'reflow'>(settings.mode);
+  if (persistedMode !== settings.mode) {
+    setPersistedMode(settings.mode);
+    if (!userToggledMode) {
+      setMode(settings.mode);
+    }
+  }
   // Reading mode: vertical continuous ↔ horizontal page-swipe (PDF mode only).
   const [horizontal, setHorizontal] = useState(false);
   // Bookmark sheet visibility.
@@ -72,24 +92,21 @@ export default function ReaderScreen() {
   // is always CALLED (Rules of Hooks); `enabled=false` short-circuits its load
   // effect so PDF mode pays nothing for it.
   //
-  // `reader.currentPage` is the ENTRY page: on the transition into reflow, the hook
-  // maps it through the document's page index to the block that page's content
-  // starts at. It reads the value via a ref, so page turns in PDF mode do not
-  // re-run the load.
+  // `reader.currentPage` is the ENTRY page: on an in-session transition into
+  // reflow, the hook maps it through the document's page index to the block that
+  // page's content starts at. It reads the value via a ref, so page turns in PDF
+  // mode do not re-run the load.
+  //
+  // `restoreSavedPosition` is true only until the user's first in-session mode
+  // toggle: when the reader opens straight into reflow (the persisted mode), the
+  // hook resumes the persisted Reflow position instead of the PDF page.
   const reflowEnabled = mode === 'reflow' && reader.book !== null;
-  const reflow = useReflowReader(reader.book ?? null, reflowEnabled, reader.currentPage);
-
-  // Update settings when mode changes (but not during initial sync)
-  const initializedRef = useRef(false);
-  useEffect(() => {
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      return;
-    }
-    if (settings.mode !== mode) {
-      updateSettings({ mode });
-    }
-  }, [mode, settings.mode, updateSettings]);
+  const reflow = useReflowReader(
+    reader.book ?? null,
+    reflowEnabled,
+    reader.currentPage,
+    !userToggledMode,
+  );
 
   // Live page/pageCount for callbacks that must stay stable across page turns.
   // Synced in an effect, not during render: writing a ref while rendering is
@@ -182,6 +199,7 @@ export default function ReaderScreen() {
   const { getCurrentPdfPage } = reflow;
 
   const handleToggleMode = useCallback(() => {
+    setUserToggledMode(true);
     setMode((current) => {
       if (current === 'reflow') {
         const page = getCurrentPdfPage();
@@ -389,7 +407,6 @@ export default function ReaderScreen() {
                 state={reflow.state}
                 settings={settings}
                 onVisibleBlockChange={reflow.reportVisibleBlock}
-                onScrollTargetConsumed={reflow.consumeScrollTarget}
                 onRegenerate={reflow.regenerate}
               />
             ) : (
