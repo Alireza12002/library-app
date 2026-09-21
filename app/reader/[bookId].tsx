@@ -58,7 +58,7 @@ export default function ReaderScreen() {
 
   // Reading mode: pdf (page-based) ↔ reflow (continuous text).
   // Initialized from settings when they are already loaded; the adjustment below
-  // adopts the persisted mode once AsyncStorage resolves.
+  // adopts the persisted mode once the settings row loads from SQLite.
   const [mode, setMode] = useState<'pdf' | 'reflow'>(() => settings.mode ?? 'pdf');
   // True once the user has switched modes in this session. It gates BOTH the
   // mode adoption below and the reflow position restore: after a deliberate
@@ -67,7 +67,7 @@ export default function ReaderScreen() {
   // straight into reflow resumes the persisted Reflow position.
   const [userToggledMode, setUserToggledMode] = useState(false);
   // The persisted mode as of the last render — React's "adjust state when a prop
-  // changes" pattern. The reader can mount before AsyncStorage resolves, so
+  // changes" pattern. The reader can mount before the settings row loads, so
   // `mode` may have started from the defaults; when the real settings arrive,
   // adopt the persisted mode unless the user has already chosen a mode here.
   // Every local mode change persists immediately through updateSettings in the
@@ -294,9 +294,7 @@ export default function ReaderScreen() {
         <View style={styles.headerRight}>
           <IconButton
             name={mode === 'reflow' ? 'text' : 'layers-outline'}
-            accessibilityLabel={
-              mode === 'reflow' ? 'Switch to PDF mode' : 'Switch to Reflow mode'
-            }
+            accessibilityLabel={mode === 'reflow' ? 'Switch to PDF mode' : 'Switch to Reflow mode'}
             size={22}
             tone="accent"
             onPress={handleToggleMode}

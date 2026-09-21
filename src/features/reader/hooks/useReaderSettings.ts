@@ -3,61 +3,71 @@
  *
  * Owns: settings state, persistence, validation against engine capabilities.
  * The screen renders; this decides.
+ *
+ * PERSISTENCE
+ * -----------
+ * Settings persist through the settings service into the same SQLite database
+ * as everything else. This matters beyond cosmetics: `settings.mode` selects
+ * WHICH independent reading position is restored when a book reopens — the PDF
+ * page (`last_page`) or the Reflow position (`reflow_block_index`/`_page_index`).
+ * The previous implementation wrote to an AsyncStorage module that is not part
+ * of this app; the require threw, the catch swallowed it, and the mode silently
+ * reset to 'pdf' on every launch — which is why a book "forgot" its Reflow
+ * position on restart.
+ *
+ * The loaded settings are cached module-wide so every mount after the first is
+ * synchronous, and concurrent mounts share one load.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { ReadingSettings } from '@/core/entities/readingSettings';
+import {
+  DEFAULT_READING_SETTINGS,
+  READING_MODES,
+  type ReadingSettings,
+} from '@/core/entities/readingSettings';
 import type { PdfEngineCapabilities } from '@/core/ports/pdfEngine';
 import { getPdfEngine } from '@/pdf/engine';
-
-const STORAGE_KEY = 'reader-settings';
-
-const DEFAULT_READING_SETTINGS: ReadingSettings = {
-  mode: 'pdf',
-  theme: 'light',
-  fitMode: 'width',
-  fontFamily: 'system',
-  fontSizePt: 16,
-  lineHeight: 1.5,
-  contentWidthPt: 640,
-  invertPages: false,
-  pageGap: 0,
-};
+import { getServices } from '@/services';
 
 let cachedSettings: ReadingSettings | null = null;
-let settingsLoaded = false;
-const loadListeners: ((settings: ReadingSettings) => void)[] = [];
+let loadPromise: Promise<ReadingSettings> | null = null;
 
-async function loadSettingsAsync(): Promise<ReadingSettings> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { AsyncStorage } = require('@react-native-async-storage/async-storage');
-    const stored = await AsyncStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Validate against defaults
-      cachedSettings = { ...DEFAULT_READING_SETTINGS, ...parsed };
-      settingsLoaded = true;
-      loadListeners.forEach((cb) => cb(cachedSettings!));
-      loadListeners.length = 0;
-      return cachedSettings!;
+/** Loads once; concurrent callers await the same promise. */
+function loadSettingsAsync(): Promise<ReadingSettings> {
+  if (cachedSettings) return Promise.resolve(cachedSettings);
+  if (loadPromise) return loadPromise;
+
+  loadPromise = (async () => {
+    try {
+      const { settings } = await getServices();
+      cachedSettings = await settings.getSettings();
+    } catch {
+      // Unreadable settings degrade to defaults; they must never block reading.
+      cachedSettings = { ...DEFAULT_READING_SETTINGS };
     }
-  } catch {
-    // Ignore storage errors
-  }
-  cachedSettings = DEFAULT_READING_SETTINGS;
-  settingsLoaded = true;
-  loadListeners.forEach((cb) => cb(cachedSettings!));
-  loadListeners.length = 0;
-  return DEFAULT_READING_SETTINGS;
+    return cachedSettings;
+  })();
+
+  return loadPromise;
 }
 
-function subscribeToLoad(cb: (settings: ReadingSettings) => void) {
-  if (settingsLoaded && cachedSettings) {
-    cb(cachedSettings);
-  } else {
-    loadListeners.push(cb);
-  }
+/** Persists in the background; state has already moved. Failures keep reading usable. */
+function persistSettings(next: ReadingSettings): void {
+  cachedSettings = next;
+  void (async () => {
+    try {
+      const { settings } = await getServices();
+      cachedSettings = await settings.saveSettings(next);
+    } catch {
+      // Best-effort: the in-memory settings still apply for this session.
+    }
+  })();
+}
+
+/** Test seam: drops the module cache so a fresh load hits storage again. */
+export function resetReaderSettingsCacheForTesting(): void {
+  cachedSettings = null;
+  loadPromise = null;
 }
 
 export interface UseReaderSettingsResult {
@@ -75,37 +85,24 @@ export interface UseReaderSettingsResult {
 export function useReaderSettings(): UseReaderSettingsResult {
   const engine = getPdfEngine();
 
-  const [settings, setSettings] = useState<ReadingSettings>(DEFAULT_READING_SETTINGS);
-  const [isLoading, setIsLoading] = useState(true);
+  // Cached settings make every mount after the first synchronous — the reader
+  // then starts directly in the persisted mode with no default-mode flash.
+  const [settings, setSettings] = useState<ReadingSettings>(
+    () => cachedSettings ?? DEFAULT_READING_SETTINGS,
+  );
+  const [isLoading, setIsLoading] = useState(cachedSettings === null);
   const mountedRef = useRef(true);
-  const initializedRef = useRef(false);
 
-  // Load from storage on mount
   useEffect(() => {
     mountedRef.current = true;
 
-    // If already loaded, set state immediately in the effect (this is fine because
-    // we're transitioning from the initial default state to the loaded state)
-    if (settingsLoaded && cachedSettings && !initializedRef.current) {
-      initializedRef.current = true;
-      setSettings(cachedSettings);
-      setIsLoading(false);
-      return () => {
-        mountedRef.current = false;
-      };
-    }
-
-    // Otherwise subscribe to the async load
-    subscribeToLoad((loaded) => {
-      if (mountedRef.current) {
-        setSettings(loaded);
-        setIsLoading(false);
-      }
-    });
-
-    // Kick off async load if not already started
-    if (!settingsLoaded) {
-      void loadSettingsAsync();
+    if (cachedSettings === null) {
+      void loadSettingsAsync().then((loaded) => {
+        if (mountedRef.current) {
+          setSettings(loaded);
+          setIsLoading(false);
+        }
+      });
     }
 
     return () => {
@@ -114,39 +111,19 @@ export function useReaderSettings(): UseReaderSettingsResult {
   }, []);
 
   const updateSettings = useCallback(
-    async (patch: Partial<ReadingSettings>) => {
-      const newSettings: ReadingSettings = { ...settings, ...patch };
-      setSettings(newSettings);
-
-      // Validate against capabilities
-      const validated = validateAgainstCapabilities(newSettings, engine.capabilities);
-      if (validated !== newSettings) {
-        setSettings(validated);
-      }
-
-      // Persist
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { AsyncStorage } = require('@react-native-async-storage/async-storage');
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(validated));
-        cachedSettings = validated;
-      } catch {
-        // Persistence is best-effort
-      }
+    (patch: Partial<ReadingSettings>) => {
+      const merged: ReadingSettings = { ...settings, ...patch };
+      const validated = validateAgainstCapabilities(merged, engine.capabilities);
+      setSettings(validated);
+      persistSettings(validated);
     },
     [settings, engine.capabilities],
   );
 
-  const resetSettings = useCallback(async () => {
-    setSettings(DEFAULT_READING_SETTINGS);
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { AsyncStorage } = require('@react-native-async-storage/async-storage');
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_READING_SETTINGS));
-      cachedSettings = DEFAULT_READING_SETTINGS;
-    } catch {
-      // Ignore
-    }
+  const resetSettings = useCallback(() => {
+    const defaults = { ...DEFAULT_READING_SETTINGS };
+    setSettings(defaults);
+    persistSettings(defaults);
   }, []);
 
   return {
@@ -168,7 +145,7 @@ function validateAgainstCapabilities(
 ): ReadingSettings {
   const validated: ReadingSettings = { ...settings };
 
-  // Layout mode: both 'pdf' and 'reflow' are now supported
+  // Layout mode: both 'pdf' and 'reflow' are supported.
   if (!READING_MODES.includes(validated.mode)) {
     validated.mode = 'pdf';
   }
@@ -193,6 +170,3 @@ function validateAgainstCapabilities(
 
   return validated;
 }
-
-// Re-export for validation function
-const READING_MODES = ['pdf', 'reflow'] as const;

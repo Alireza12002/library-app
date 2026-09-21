@@ -10,6 +10,7 @@ import { MIGRATION_002 } from './002_text_cache';
 import { MIGRATION_003 } from './003_bookmark_reflow';
 import { MIGRATION_004 } from './004_reflow_documents';
 import { MIGRATION_005 } from './005_reflow_reading_position';
+import { MIGRATION_006 } from './006_reading_settings_columns';
 
 export interface Migration {
   /** Sequential, starting at 1. Stored in SQLite's `user_version`. */
@@ -25,6 +26,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 3, name: 'bookmark_reflow', sql: MIGRATION_003 },
   { version: 4, name: 'reflow_documents', sql: MIGRATION_004 },
   { version: 5, name: 'reflow_reading_position', sql: MIGRATION_005 },
+  { version: 6, name: 'reading_settings_columns', sql: MIGRATION_006 },
 ];
 
 /** Target schema version — the highest registered migration. */

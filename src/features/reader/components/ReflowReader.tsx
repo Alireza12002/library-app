@@ -9,38 +9,53 @@
  * Rotating or resizing the window reflows the text, because the measure derives
  * from the live window width.
  *
- * POSITION
- * --------
+ * POSITION — DIRECT OPEN, NO SCROLL
+ * ---------------------------------
  * The document arrives whole, so entering at a given PDF page is a matter of the
- * block index resolved from the document's page map. That index is handed to
- * FlatList as `initialScrollIndex`: the virtualized list renders its FIRST window
- * at the target block — blocks before it are never rendered — and after layout
- * performs one internal, non-animated scroll onto the exact offset. The reader
- * therefore appears directly at the target position with no visible scroll journey.
- * While scrolling, the topmost visible block is reported back so the screen can
- * map the position to a PDF page when the user switches modes.
+ * block index resolved from the document's page map. The list is then mounted with
+ * that block as its FIRST item: the virtualized list's data window starts at the
+ * target (`getItem(i)` = `blocks[windowStart + i]`), so the target sits at content
+ * offset 0 and the reader appears there on its first frame. There is no
+ * `initialScrollIndex`, no `scrollTo`, no measurement-dependent offset estimate,
+ * and no rows 0..target-1 rendered first.
+ *
+ * Why not `initialScrollIndex`: rows are variable-height text and the list has no
+ * `getItemLayout`, so the list can only ESTIMATE the target offset from the average
+ * measured row height — which is 0 at mount. It therefore lands wrong, corrects on
+ * later frames (and via `onScrollToIndexFailed` retries), and the user sees the
+ * content jump/scroll into place. Starting the window at the target removes the
+ * estimate entirely.
+ *
+ * Reading backwards: when the user reaches the top of the window, a chunk of
+ * earlier blocks is prepended (`onStartReached`) and `maintainVisibleContentPosition`
+ * keeps the block they are looking at fixed on screen — keys are the ABSOLUTE
+ * block index, so the list can identify that block across the prepend.
+ *
+ * The topmost visible block (absolute index) is reported back so the screen can
+ * map the position to a PDF page and persist the Reflow position.
  *
  * PERFORMANCE
  * -----------
  * A book is thousands of blocks, so everything a row touches is precomputed: block
- * styles come from one memoized table keyed by block type; renderItem/keyExtractor/
- * footer are stable so FlatList's row memoization can bail out; rows are React.memo;
- * and the visible-block report writes to a ref rather than state.
+ * styles come from one memoized table keyed by block type; renderItem/keyExtractor
+ * are stable so the list's row memoization can bail out; rows are React.memo; the
+ * data window is a view over the block array (no copies on prepend); and the
+ * visible-block report writes to a ref rather than state.
  */
 import {
   ActivityIndicator,
-  FlatList,
   Image,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  VirtualizedList,
   useWindowDimensions,
   type ListRenderItemInfo,
   type TextStyle,
   type ViewToken,
 } from 'react-native';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 
 import { Screen } from '@/components/ui';
 import { useTheme, READER_THEMES, type ReaderThemeTokens } from '@/theme';
@@ -263,6 +278,167 @@ function GeneratingState({
   );
 }
 
+/**
+ * Blocks prepended per backward extension. Large enough that one extension
+ * usually covers more than a viewport (so the start edge is not re-hit every
+ * few pixels), small enough that a prepend is a handful of cheap text rows.
+ */
+const BACKWARD_CHUNK = 32;
+
+/**
+ * The list's data: a VIEW over the whole block array starting at `start`.
+ *
+ * Local list index `i` is absolute block `blocks[start + i]`. Making the window
+ * the data (instead of slicing the array) means extending backwards is O(1) — a
+ * new `start`, no copies of thousands of blocks — and the window always reaches
+ * the end of the book, so reading forward is ordinary virtualization.
+ */
+interface BlockWindow {
+  blocks: TextBlock[];
+  start: number;
+}
+
+function getWindowItem(window: BlockWindow, index: number): TextBlock {
+  // VirtualizedList only asks for indices below getItemCount, so the lookup
+  // cannot actually miss; the non-null assertion encodes that contract.
+  return window.blocks[window.start + index]!;
+}
+
+function getWindowItemCount(window: BlockWindow): number {
+  return Math.max(0, window.blocks.length - window.start);
+}
+
+/** Clamps an open-at block into the document. */
+function clampStart(blockIndex: number, blockCount: number): number {
+  if (blockCount <= 0) return 0;
+  return Math.min(Math.max(0, Math.floor(blockIndex)), blockCount - 1);
+}
+
+interface ReflowListProps {
+  blocks: TextBlock[];
+  /** Absolute block the list is mounted AT — its first rendered row. */
+  startBlockIndex: number;
+  blockStyles: BlockStyles;
+  contentWidth: number;
+  onVisibleBlockChange: (blockIndex: number) => void;
+}
+
+/**
+ * The virtualized list, mounted with `startBlockIndex` as its first item.
+ *
+ * Because the target block IS the first item of the data window, it sits at
+ * content offset 0: the very first frame shows it, with no scroll command of any
+ * kind. The rows before it exist only as data (`blocks[0..start-1]`) and are
+ * brought into the window in chunks when the user scrolls up to the top edge.
+ *
+ * Keyed by the screen on the open-at block, so a new activation target mounts a
+ * fresh window instead of scrolling an existing one.
+ */
+const ReflowList = memo(function ReflowList({
+  blocks,
+  startBlockIndex,
+  blockStyles,
+  contentWidth,
+  onVisibleBlockChange,
+}: ReflowListProps) {
+  // Where the data window currently starts. Initialised from the resolved target
+  // and only ever moves TOWARDS 0 as the user reads backwards.
+  const [windowStart, setWindowStart] = useState(() => clampStart(startBlockIndex, blocks.length));
+
+  const window = useMemo<BlockWindow>(
+    () => ({ blocks, start: clampStart(windowStart, blocks.length) }),
+    [blocks, windowStart],
+  );
+
+  /**
+   * Keys are the ABSOLUTE block index. They must be stable across a prepend for
+   * `maintainVisibleContentPosition` to find "the block the user is looking at"
+   * in the new data and hold it in place; a local index would shift by the
+   * chunk size and the list would have nothing to anchor to.
+   */
+  const keyExtractor = useCallback(
+    (_item: TextBlock, index: number) => String(window.start + index),
+    [window.start],
+  );
+
+  /**
+   * Reports the topmost visible block (absolute index) so the position can map
+   * back to a PDF page. Read from the token KEY, which is the absolute index —
+   * `token.index` is local to the window. The callback is deliberately free of
+   * window state: VirtualizedList binds `onViewableItemsChanged` once, at mount.
+   */
+  const onViewableItemsChanged = useCallback(
+    (info: { viewableItems: ViewToken<TextBlock>[] }) => {
+      let topmost = Number.POSITIVE_INFINITY;
+      for (const token of info.viewableItems) {
+        if (!token.isViewable) continue;
+        const absolute = Number(token.key);
+        if (Number.isInteger(absolute) && absolute < topmost) topmost = absolute;
+      }
+      if (Number.isFinite(topmost)) onVisibleBlockChange(topmost);
+    },
+    [onVisibleBlockChange],
+  );
+
+  /**
+   * The user reached the top of the window: bring the previous chunk of blocks
+   * in. `maintainVisibleContentPosition` keeps the currently visible block fixed
+   * on screen while the rows above it are inserted, so this is invisible apart
+   * from the scrollbar growing. At block 0 the state does not change and nothing
+   * re-renders.
+   */
+  const extendBackward = useCallback(() => {
+    setWindowStart((current) => Math.max(0, current - BACKWARD_CHUNK));
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<TextBlock>) => (
+      <RenderBlock block={item} blockStyles={blockStyles} contentWidth={contentWidth} />
+    ),
+    [blockStyles, contentWidth],
+  );
+
+  const contentContainerStyle = useMemo(
+    () => ({
+      width: contentWidth,
+      alignSelf: 'center' as const,
+      paddingTop: 24,
+      paddingBottom: 64,
+    }),
+    [contentWidth],
+  );
+
+  return (
+    <VirtualizedList<TextBlock>
+      data={window}
+      getItem={getWindowItem}
+      getItemCount={getWindowItemCount}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      // Backward extension. `onStartReached` fires when the first item of the
+      // window is rendered and the scroll offset is within the threshold of the
+      // top; the window is then grown towards block 0.
+      onStartReached={extendBackward}
+      onStartReachedThreshold={1}
+      // Holds the first visible row in place when rows are inserted above it —
+      // the native scroll offset is adjusted in the same layout pass, so the
+      // content the user is reading does not move.
+      maintainVisibleContentPosition={MAINTAIN_VISIBLE_CONTENT_POSITION}
+      onViewableItemsChanged={onViewableItemsChanged}
+      contentContainerStyle={contentContainerStyle}
+      showsVerticalScrollIndicator
+      // Virtualization: text rows are light, so a modest window keeps memory flat
+      // while staying ahead of the scroll.
+      initialNumToRender={12}
+      maxToRenderPerBatch={8}
+      updateCellsBatchingPeriod={50}
+      windowSize={7}
+    />
+  );
+});
+
+const MAINTAIN_VISIBLE_CONTENT_POSITION = { minIndexForVisible: 0 } as const;
+
 export function ReflowReader({
   state,
   settings,
@@ -281,59 +457,6 @@ export function ReflowReader({
   const contentWidth = useMemo(
     () => readingColumnWidth(windowWidth, settings.contentWidthPt),
     [windowWidth, settings.contentWidthPt],
-  );
-
-  const listRef = useRef<FlatList<TextBlock> | null>(null);
-
-  /** Reports the topmost visible row so the position can map back to a PDF page. */
-  const onViewableItemsChanged = useCallback(
-    (info: { viewableItems: ViewToken<TextBlock>[] }) => {
-      let topmost = Number.POSITIVE_INFINITY;
-      for (const token of info.viewableItems) {
-        if (token.index === null || token.index === undefined) continue;
-        if (token.index < topmost) topmost = token.index;
-      }
-      if (Number.isFinite(topmost)) onVisibleBlockChange(topmost);
-    },
-    [onVisibleBlockChange],
-  );
-
-  const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<TextBlock>) => (
-      <RenderBlock block={item} blockStyles={blockStyles} contentWidth={contentWidth} />
-    ),
-    [blockStyles, contentWidth],
-  );
-
-  const keyExtractor = useCallback(
-    (item: TextBlock, index: number) => `${item.pageIndex}:${index}`,
-    [],
-  );
-
-  const contentContainerStyle = useMemo(
-    () => ({
-      width: contentWidth,
-      alignSelf: 'center' as const,
-      paddingTop: 24,
-      paddingBottom: 64,
-    }),
-    [contentWidth],
-  );
-
-  const onScrollToIndexFailed = useCallback(
-    (info: { index: number; averageItemLength: number }) => {
-      // The target row is not laid out yet. Jump to an estimated offset, then land
-      // exactly on the next frame — this is the documented FlatList recovery, not a
-      // guess at a pixel position.
-      listRef.current?.scrollToOffset({
-        offset: info.averageItemLength * info.index,
-        animated: false,
-      });
-      requestAnimationFrame(() => {
-        listRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 });
-      });
-    },
-    [],
   );
 
   if (state.status === 'loading' || state.status === 'idle') {
@@ -390,10 +513,10 @@ export function ReflowReader({
   }
 
   // An activation resolves its open-at block BEFORE the list may mount. Holding
-  // the spinner here keeps the FlatList from ever mounting at the top of the book
-  // and then scrolling — the visible journey `initialScrollIndex` replaces. The
-  // window is one commit wide: the hook publishes the target synchronously with
-  // readiness, or in the re-entry fast path immediately on activation.
+  // the spinner here keeps the list from ever mounting at the top of the book
+  // and then scrolling. The window is one commit wide: the hook publishes the
+  // target synchronously with readiness, or in the re-entry fast path
+  // immediately on activation.
   if (state.initialBlockIndex === null) {
     return (
       <Screen gutter={false} style={{ backgroundColor: theme.background }}>
@@ -406,28 +529,17 @@ export function ReflowReader({
 
   return (
     <Screen gutter={false} style={{ backgroundColor: theme.background, flex: 1 }}>
-      <FlatList
-        ref={listRef}
-        data={state.blocks}
-        keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        // Direct open: the virtualized list renders its first window AT this
-        // block (blocks before it are never rendered) and lands on the exact
-        // offset with one internal non-animated scroll after layout. Only read
-        // at mount, which is exactly when the hook publishes a fresh target.
-        initialScrollIndex={state.initialBlockIndex}
-        onViewableItemsChanged={onViewableItemsChanged}
-        onScrollToIndexFailed={onScrollToIndexFailed}
-        contentContainerStyle={contentContainerStyle}
-        showsVerticalScrollIndicator
-        // Virtualization: text rows are light, so a modest window keeps memory flat
-        // while staying ahead of the scroll. removeClippedSubviews detaches offscreen
-        // rows from the native view tree on Android.
-        removeClippedSubviews
-        initialNumToRender={10}
-        maxToRenderPerBatch={8}
-        updateCellsBatchingPeriod={50}
-        windowSize={7}
+      <ReflowList
+        // A new activation target (mode switch, restore) mounts a fresh list
+        // whose data window STARTS at that block — never a scroll of the old one.
+        // (Between activations the hook publishes null, so the list unmounts and
+        // a same-valued target still mounts fresh.)
+        key={state.initialBlockIndex}
+        blocks={state.blocks}
+        startBlockIndex={state.initialBlockIndex}
+        blockStyles={blockStyles}
+        contentWidth={contentWidth}
+        onVisibleBlockChange={onVisibleBlockChange}
       />
     </Screen>
   );

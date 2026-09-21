@@ -12,6 +12,10 @@ import {
 } from './repositories/bookmarkRepository';
 import { createBookRepository, type BookRepository } from './repositories/bookRepository';
 import {
+  createReadingSettingsRepository,
+  type ReadingSettingsRepository,
+} from './repositories/readingSettingsRepository';
+import {
   createReflowDocumentRepository,
   type ReflowDocumentRepository,
 } from './repositories/reflowDocumentRepository';
@@ -38,12 +42,17 @@ export {
   type NewReflowDocument,
   type ReflowDocumentRepository,
 } from './repositories/reflowDocumentRepository';
+export {
+  createReadingSettingsRepository,
+  type ReadingSettingsRepository,
+} from './repositories/readingSettingsRepository';
 
 export interface Repositories {
   books: BookRepository;
   bookmarks: BookmarkRepository;
   textCache: TextCacheRepository;
   reflowDocuments: ReflowDocumentRepository;
+  readingSettings: ReadingSettingsRepository;
 }
 
 let cached: Repositories | null = null;
@@ -60,6 +69,7 @@ export async function getRepositories(): Promise<Repositories> {
     bookmarks: createBookmarkRepository(db),
     textCache: createTextCacheRepository(db),
     reflowDocuments: createReflowDocumentRepository(db),
+    readingSettings: createReadingSettingsRepository(db),
   };
   return cached;
 }

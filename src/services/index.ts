@@ -15,11 +15,13 @@ import { createBookService, type BookService } from './bookService';
 import { createBookmarkService, type BookmarkService } from './bookmarkService';
 import { createImportService, type ImportService } from './importService';
 import { createReflowService, type ReflowService } from './reflowService';
+import { createSettingsService, type SettingsService } from './settingsService';
 import { createTextExtractionService, type TextExtractionService } from './textExtractionService';
 
 export { type BookService } from './bookService';
 export { createBookmarkService, type BookmarkService } from './bookmarkService';
 export { createImportService, type ImportResult, type ImportService } from './importService';
+export { createSettingsService, type SettingsService } from './settingsService';
 export { createTextExtractionService, type TextExtractionService } from './textExtractionService';
 export {
   createReflowService,
@@ -35,6 +37,7 @@ interface ServiceRegistry {
   imports: ImportService;
   textExtraction: TextExtractionService;
   reflow: ReflowService;
+  settings: SettingsService;
 }
 
 let instances: ServiceRegistry | null = null;
@@ -82,7 +85,12 @@ export async function getServices(): Promise<ServiceRegistry> {
     getPageCount: (source) => engine.getPageCount(source),
   });
 
-  instances = { books, bookmarks, imports, textExtraction, reflow };
+  const settings = createSettingsService({
+    load: () => repos.readingSettings.get(),
+    save: (next) => repos.readingSettings.save(next),
+  });
+
+  instances = { books, bookmarks, imports, textExtraction, reflow, settings };
   return instances;
 }
 
