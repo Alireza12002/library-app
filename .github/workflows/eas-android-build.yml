@@ -35,7 +35,7 @@ jobs:
       - name: Build Android via EAS
         run: |
           eas build \
-            --profile development \
+            --profile production \
             --platform android \
             --non-interactive
 
