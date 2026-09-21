@@ -3,7 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TabBarIcon } from '@/components/ui';
 import { useTheme } from '@/theme';
-
+import { Stack } from 'expo-router';
 /**
  * Tab group. The library is the only bottom-nav destination; Settings is reached
  * from the gear in the library header instead (`href: null` keeps the route
@@ -28,42 +28,42 @@ const TAB_BAR_CONTENT_HEIGHT = 56;
 export default function TabsLayout() {
   const { colors, typography, hairline } = useTheme();
   const insets = useSafeAreaInsets();
-
-  return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        sceneStyle: { backgroundColor: colors.background },
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: typography.tiny,
-        tabBarItemStyle: { paddingTop: 6 },
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderTopWidth: hairline,
-          height: TAB_BAR_CONTENT_HEIGHT + insets.bottom,
-          paddingBottom: insets.bottom,
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Library',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name="library-outline" color={color} focused={focused} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: 'Settings',
-          // Hidden from the bar; still reachable via the library header gear.
-          href: null,
-        }}
-      />
-    </Tabs>
-  );
+  return <Stack screenOptions={{ headerShown: false }} />;
+  // return null (
+  //   <Tabs
+  //     screenOptions={{
+  //       headerShown: false,
+  //       sceneStyle: { backgroundColor: colors.background },
+  //       tabBarActiveTintColor: colors.accent,
+  //       tabBarInactiveTintColor: colors.textMuted,
+  //       tabBarLabelStyle: typography.tiny,
+  //       tabBarItemStyle: { paddingTop: 6 },
+  //       tabBarStyle: {
+  //         backgroundColor: colors.surface,
+  //         borderTopColor: colors.border,
+  //         borderTopWidth: hairline,
+  //         height: TAB_BAR_CONTENT_HEIGHT + insets.bottom,
+  //         paddingBottom: insets.bottom,
+  //       },
+  //     }}
+  //   >
+  //     {/* <Tabs.Screen
+  //       name="index"
+  //       options={{
+  //         title: 'Library',
+  //         tabBarIcon: ({ color, focused }) => (
+  //           <TabBarIcon name="library-outline" color={color} focused={focused} />
+  //         ),
+  //       }}
+  //     />
+  //     <Tabs.Screen
+  //       name="settings"
+  //       options={{
+  //         title: 'Settings',
+  //         // Hidden from the bar; still reachable via the library header gear.
+  //         href: null,
+  //       }}
+  //     /> */}
+  //   </Tabs>
+  // );
 }

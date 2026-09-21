@@ -83,13 +83,13 @@ export default function LibraryScreen() {
       <View style={[styles.headerWrapper, { paddingHorizontal: grid.horizontalPadding }]}>
         <View style={[styles.titleRow, { paddingTop: insets.top + spacing.lg }]}>
           <Text variant="displayLarge">My Library</Text>
-          <IconButton
+          {/* <IconButton
             name="settings-outline"
             accessibilityLabel="Settings"
             size={22}
             tone="muted"
             onPress={openSettings}
-          />
+          /> */}
         </View>
 
         {error ? (
@@ -159,7 +159,6 @@ export default function LibraryScreen() {
 
 const styles = StyleSheet.create({
   headerWrapper: {
-    // Header, error banner and Add button stay put; only the grid scrolls.
     alignSelf: 'stretch',
   },
   titleRow: {
